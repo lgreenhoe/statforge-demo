@@ -1,0 +1,149 @@
+{
+  "version": "0.9",
+  "rules": [
+    {
+      "id": "high_k_rate",
+      "title": "Contact and Plate Discipline",
+      "category": "Hitting",
+      "priority": "High",
+      "metric": "k_rate_season",
+      "operator": "gt",
+      "threshold": 0.24,
+      "why_template": "Season strikeout rate is above target ({value:.3f} vs target <= {threshold:.3f}).",
+      "drills": [
+        {
+          "name": "Two-Strike Contact Ladder",
+          "setup": "Front toss, middle-away lanes, 2-strike count simulation.",
+          "reps_sets": "4 rounds x 8 swings",
+          "coaching_cues": "Short path, quiet head, fight off close pitches.",
+          "progression": "Shrink lane width each round."
+        },
+        {
+          "name": "Take/Track Round",
+          "setup": "Coach toss from short distance; hitter tracks only.",
+          "reps_sets": "3 rounds x 10 pitches",
+          "coaching_cues": "Call ball/strike early, commit to zone boundaries.",
+          "progression": "Add mixed speed and edge locations."
+        },
+        {
+          "name": "Choke-Up Contact Set",
+          "setup": "Tee plus front toss with reduced stride.",
+          "reps_sets": "3 sets x 12 swings",
+          "coaching_cues": "Barrel control first, intent through center field.",
+          "progression": "Finish with game-speed front toss."
+        }
+      ]
+    },
+    {
+      "id": "ops_downtrend",
+      "title": "Approach and Timing Reset",
+      "category": "Hitting",
+      "priority": "Medium",
+      "metric": "ops_delta_last5_vs_season",
+      "operator": "lt",
+      "threshold": -0.05,
+      "why_template": "Recent OPS is trending below season baseline ({value:.3f} delta).",
+      "drills": [
+        {
+          "name": "Early Timing Rounds",
+          "setup": "Machine or front toss, call timing cue before launch.",
+          "reps_sets": "4 rounds x 6 swings",
+          "coaching_cues": "Get to ready position early, control gather tempo.",
+          "progression": "Increase velocity slightly each round."
+        },
+        {
+          "name": "Gap-to-Gap Sequencing",
+          "setup": "Alternating opposite-gap and pull-gap intent swings.",
+          "reps_sets": "3 sets x 10 swings",
+          "coaching_cues": "Stay through ball, match barrel path to pitch plane.",
+          "progression": "Add offspeed recognition callout."
+        }
+      ]
+    },
+    {
+      "id": "slow_pop_time",
+      "title": "Pop Time Efficiency",
+      "category": "Catching",
+      "priority": "High",
+      "metric": "pop_time_avg",
+      "operator": "gt",
+      "threshold": 2.15,
+      "why_template": "Average pop time is above target ({value:.3f}s vs target <= {threshold:.3f}s).",
+      "drills": [
+        {
+          "name": "Knee-Down to Throw Series",
+          "setup": "Start from receiving stance, quick transfer to throw.",
+          "reps_sets": "5 sets x 5 reps",
+          "coaching_cues": "Direct hand path, eliminate extra gather.",
+          "progression": "Add stopwatch benchmark by set."
+        },
+        {
+          "name": "Foot Replacement Timing",
+          "setup": "Dry reps then short throws to second-base target net.",
+          "reps_sets": "4 sets x 6 reps",
+          "coaching_cues": "Right-left replacement in rhythm, keep shoulders level.",
+          "progression": "Move to live short-hop feeds."
+        },
+        {
+          "name": "Quick Exchange Challenge",
+          "setup": "Rapid-fire coach feeds with immediate exchange.",
+          "reps_sets": "3 rounds x 10 feeds",
+          "coaching_cues": "Glove-to-hand in one move, hands stay compact.",
+          "progression": "Score clean exchanges only."
+        }
+      ]
+    },
+    {
+      "id": "slow_transfer",
+      "title": "Exchange Mechanics",
+      "category": "Footwork",
+      "priority": "Medium",
+      "metric": "transfer_avg",
+      "operator": "gt",
+      "threshold": 0.82,
+      "why_template": "Exchange time is slower than target ({value:.3f}s vs target <= {threshold:.3f}s).",
+      "drills": [
+        {
+          "name": "Pocket-to-Release Reps",
+          "setup": "No throw dry work with stopwatch.",
+          "reps_sets": "6 sets x 6 reps",
+          "coaching_cues": "Receive softly, transfer directly to launch slot.",
+          "progression": "Add short throw every second rep."
+        },
+        {
+          "name": "Rapid Transfer Ladder",
+          "setup": "Alternating feed heights and glove-side locations.",
+          "reps_sets": "4 rounds x 8 reps",
+          "coaching_cues": "Quiet lower half, compact hand movement.",
+          "progression": "Reduce rep target time by 0.02s each round."
+        }
+      ]
+    },
+    {
+      "id": "low_cs_rate",
+      "title": "Throw Accuracy and Release Path",
+      "category": "Arm",
+      "priority": "Medium",
+      "metric": "cs_pct_season",
+      "operator": "lt",
+      "threshold": 0.28,
+      "why_template": "Caught-stealing rate is below target ({value:.3f} vs target >= {threshold:.3f}).",
+      "drills": [
+        {
+          "name": "Target-Line Throw Series",
+          "setup": "Second-base line target with taped lane.",
+          "reps_sets": "5 sets x 4 throws",
+          "coaching_cues": "Stay through target line, finish over front side.",
+          "progression": "Track percentage of throws in lane."
+        },
+        {
+          "name": "Transfer + One-Hop Accuracy",
+          "setup": "Coach feeds, throw to chest-high net marker.",
+          "reps_sets": "4 rounds x 6 throws",
+          "coaching_cues": "Consistent release slot, avoid arm drag.",
+          "progression": "Add randomized pitch locations."
+        }
+      ]
+    }
+  ]
+}

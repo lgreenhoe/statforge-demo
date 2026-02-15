@@ -1,0 +1,1 @@
+"""Coaching helpers for StatForge."""

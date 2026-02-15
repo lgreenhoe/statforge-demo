@@ -1,0 +1,9 @@
+opencv-python
+ffmpeg-python
+imageio-ffmpeg
+numpy
+scipy
+reportlab
+matplotlib
+streamlit
+pandas
