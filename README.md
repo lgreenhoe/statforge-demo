@@ -67,3 +67,8 @@ streamlit run statforge_web/app.py
 - Player names are anonymized (`Demo Catcher`, `Demo Player 2`).
 - No team names, opponent fields, jersey numbers, or personal dates in demo data.
 - No upload storage flow in the Streamlit demo.
+
+### Demo dataset maintenance
+- Main deterministic dataset: `statforge_web/demo_data/demo_dataset.json`
+- Validator: `python -m statforge_web.demo_data_validator`
+- Keep all demo-only data isolated under `statforge_web/` so desktop/local DB workflows remain unaffected.

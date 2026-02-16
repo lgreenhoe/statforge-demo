@@ -26,6 +26,7 @@ from statforge_core.metrics import compute_catching_metrics, compute_hitting_met
 from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.recommendations import generate_recommendations
 from statforge_core.season_summary import compute_season_summary_metrics
+from statforge_web.demo_data_loader import compute_or_map_metrics, load_demo_dataset
 from statforge_web.drill_library import DRILL_LIBRARY, filter_drill_library, match_library_drills
 from statforge_web.drills import build_training_suggestions
 from statforge_web.ui_constants import APP_SIGNATURE, APP_SUBTITLE, APP_TITLE, HELP_TEXT, METRIC_HELP, SECTION_GAP_MD
@@ -66,6 +67,7 @@ METRIC_LABELS = {
     "pb_rate": "PB Rate",
 }
 DATE_COLUMNS = ("date", "game_date", "session_date", "event_date")
+TEAM_FILTER_KEY = "sidebar_team"
 PLAYER_FILTER_KEY = "sidebar_player"
 SEASON_FILTER_KEY = "sidebar_season"
 GAME_FILTER_KEY = "sidebar_game"
@@ -206,6 +208,12 @@ def _password_gate() -> bool:
 
 @st.cache_data(show_spinner=False)
 def _load_demo_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    dataset_path = DATA_DIR / "demo_dataset.json"
+    if dataset_path.exists():
+        dataset = load_demo_dataset(path=dataset_path)
+        mapped = compute_or_map_metrics(dataset, filters=None)
+        return mapped["players"], mapped["games"], mapped["practice"], mapped["season_summaries"]
+
     players = pd.read_csv(DATA_DIR / "players.csv")
     games = pd.read_csv(DATA_DIR / "games.csv")
     practice = pd.read_csv(DATA_DIR / "practice.csv")
@@ -253,6 +261,7 @@ def _trend_arrow(delta: float, inverse_better: bool = False) -> str:
 
 def _reset_filters_state() -> None:
     reset_keys = [
+        TEAM_FILTER_KEY,
         PLAYER_FILTER_KEY,
         SEASON_FILTER_KEY,
         GAME_FILTER_KEY,
@@ -419,6 +428,7 @@ def _build_filtered_export_frame(
     ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame
 ) -> pd.DataFrame:
     filter_meta = {
+        "team_filter": str(ctx.get("team", "All Teams")),
         "player_name": str(ctx["player"]["player_name"]),
         "season_filter": str(ctx["season"]),
         "game_filter": str(ctx["selected_game_label"]),
@@ -454,6 +464,7 @@ def _build_export_csv(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: 
     date_txt = "All" if not date_range else f"{date_range[0].date().isoformat()} to {date_range[1].date().isoformat()}"
     header_lines = [
         f"# Export generated_at_utc: {timestamp}",
+        f"# Filter team: {ctx.get('team', 'All Teams')}",
         f"# Filter player: {ctx['player']['player_name']}",
         f"# Filter season: {ctx['season']}",
         f"# Filter game: {ctx['selected_game_label']}",
@@ -473,6 +484,7 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### Current View")
     st.sidebar.caption(
+        f"Team: {ctx.get('team', 'All Teams')}\n"
         f"Player: {ctx['player']['player_name']}\n"
         f"Season: {ctx['season']}\n"
         f"Game: {ctx['selected_game_label']}\n"
@@ -482,6 +494,7 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
     if st.sidebar.button("Reset filters", key=RESET_FILTERS_KEY, use_container_width=True):
         _reset_filters_state()
         st.session_state[PLAYER_FILTER_KEY] = str(ctx.get("default_player", ""))
+        st.session_state[TEAM_FILTER_KEY] = str(ctx.get("default_team", "All Teams"))
         st.session_state[SEASON_FILTER_KEY] = "All"
         st.session_state[GAME_FILTER_KEY] = "All"
         st.session_state[NAV_FILTER_KEY] = str(ctx.get("default_nav", "📊 Dashboard"))
@@ -490,6 +503,7 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
 
 def _render_share_view(ctx: dict[str, Any]) -> None:
     params = {
+        "team": str(ctx.get("team", "All Teams")),
         "player": str(ctx["player"]["player_name"]),
         "season": str(ctx["season"]),
         "game": str(ctx["selected_game_label"]),
@@ -500,7 +514,7 @@ def _render_share_view(ctx: dict[str, Any]) -> None:
     st.sidebar.caption("Copy this query string and append it to the app URL:")
     st.sidebar.code(f"?{query_string}", language="text")
     st.sidebar.caption(
-        f"Current filters: {ctx['player']['player_name']} | {ctx['season']} | {ctx['selected_game_label']}"
+        f"Current filters: {ctx.get('team', 'All Teams')} | {ctx['player']['player_name']} | {ctx['season']} | {ctx['selected_game_label']}"
     )
     if st.sidebar.button("Apply filters to URL", use_container_width=True):
         if not safe_save("apply"):
@@ -558,11 +572,27 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
     st.sidebar.caption("Executive coaching workspace")
     st.sidebar.markdown('<div class="sf-demo-mode-pill">Demo Mode • Read-only</div>', unsafe_allow_html=True)
 
-    player_options = players["player_name"].tolist()
+    if "team" in players.columns and not players["team"].dropna().empty:
+        team_options = sorted(players["team"].dropna().astype(str).unique().tolist())
+    else:
+        team_options = ["All Teams"]
+    default_team = team_options[0] if team_options else "All Teams"
+    _safe_default_from_query(TEAM_FILTER_KEY, team_options, default_team, query_name="team")
+    team_name = st.sidebar.selectbox("Team", options=team_options, key=TEAM_FILTER_KEY)
+
+    if "team" in players.columns and team_name != "All Teams":
+        team_players = players.loc[players["team"].astype(str) == str(team_name)].copy()
+        if team_players.empty:
+            st.sidebar.caption("Demo dataset limitation: selected team has no players in this sample.")
+            team_players = players.copy()
+    else:
+        team_players = players.copy()
+
+    player_options = team_players["player_name"].tolist()
     default_player = player_options[0] if player_options else ""
     _safe_default_from_query(PLAYER_FILTER_KEY, player_options, default_player, query_name="player")
     player_name = st.sidebar.selectbox("Player", options=player_options, key=PLAYER_FILTER_KEY)
-    player_row = players.loc[players["player_name"] == player_name].iloc[0]
+    player_row = team_players.loc[team_players["player_name"] == player_name].iloc[0]
     player_id = int(player_row["player_id"])
 
     player_games = games.loc[games["player_id"] == player_id].copy()
@@ -643,6 +673,7 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
 
     return {
         "player": player_row,
+        "team": team_name,
         "player_id": player_id,
         "player_games": player_games,
         "scoped_games": scoped_games,
@@ -652,14 +683,17 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         "tk_screen": tk_screen,
         "section": section,
         "default_player": default_player,
+        "default_team": default_team,
         "default_nav": default_nav,
     }
 
 
 def _render_top_header(ctx: dict[str, Any]) -> None:
     player = ctx["player"]
+    team = ctx.get("team", "All Teams")
     season = ctx["season"]
     game = ctx["selected_game_label"]
+    refreshed = datetime.now().strftime("%b %d, %Y %I:%M %p")
     st.markdown(
         (
             '<div class="sf-header"><div class="sf-header-top">'
@@ -674,6 +708,7 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
             '</div>'
             '</div>'
             '<div class="sf-context">'
+            f'<span class="sf-chip">Team: {team}</span>'
             f'<span class="sf-chip">Player: {player["player_name"]}</span>'
             f'<span class="sf-chip">Position: {player["position"]}</span>'
             f'<span class="sf-chip">Level: {player["level"]}</span>'
@@ -682,6 +717,8 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
             '</div>'
             '<div class="sf-trust-row">'
             '<span>Last Updated: Demo Dataset Snapshot • Feb 2026</span>'
+            f'<span>Last Refreshed: {refreshed}</span>'
+            '<span>Anonymized demo dataset</span>'
             '<span>Logic Version • v0.9 (Preview)</span>'
             '</div></div>'
         ),
@@ -986,10 +1023,11 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
         )
         return
 
-    season_metrics = _window_metrics(games_sorted)
-    last5_metrics = _window_metrics(games_sorted.head(5))
-    last10_metrics = _window_metrics(games_sorted.head(10))
-    metric_pack = _build_recommendation_metrics(games_sorted, practice_df)
+    with st.spinner("Refreshing dashboard metrics..."):
+        season_metrics = _window_metrics(games_sorted)
+        last5_metrics = _window_metrics(games_sorted.head(5))
+        last10_metrics = _window_metrics(games_sorted.head(10))
+        metric_pack = _build_recommendation_metrics(games_sorted, practice_df)
 
     _render_executive_summary(metric_pack)
     _render_dashboard_coach_summary(metric_pack)

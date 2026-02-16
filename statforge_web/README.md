@@ -35,3 +35,24 @@ export STATFORGE_WEB_PASSWORD="your-demo-password"
 
 ## No Indexing
 The app injects a `noindex,nofollow` robots meta tag at runtime to discourage indexing.
+
+## Demo Dataset (JSON)
+The web demo can load a deterministic multi-team dataset from:
+
+- `statforge_web/demo_data/demo_dataset.json`
+
+### Editing demo data
+Keep the structure stable per team:
+- `team_name`
+- `players[]` with: `player_id`, `player_name`, `position`, `level`
+- `games[]` with: `season_label`, `game_no`, `date`, `opponent`, `player_stats[]`
+- `player_stats[]` with:
+  `player_id`, `ab`, `h`, `doubles`, `triples`, `hr`, `bb`, `so`, `rbi`, `sb`, `cs`, `innings_caught`, `passed_balls`, `sb_allowed`, `cs_caught`
+- `practice_sessions[]` with:
+  `player_id`, `season_label`, `session_no`, `date`, `transfer_time`, `pop_time`
+
+### Validate after edits
+From repo root:
+```bash
+python -m statforge_web.demo_data_validator
+```
