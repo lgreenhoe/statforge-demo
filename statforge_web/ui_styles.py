@@ -58,6 +58,12 @@ def get_app_css() -> str:
         min-height: 36px;
     }
 
+    section[data-testid="stSidebar"] label {
+        color: #DCE7F2 !important;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+    }
+
     section[data-testid="stSidebar"] hr {
         border-color: rgba(255,255,255,0.12);
         margin: 0.55rem 0;
@@ -111,10 +117,10 @@ def get_app_css() -> str:
     }
 
     .sf-tagline {
-        color: #EAF4FC;
-        font-size: 1.02rem;
-        font-weight: 700;
-        margin-top: 4px;
+        color: #F4FAFF;
+        font-size: 1.18rem;
+        font-weight: 800;
+        margin-top: 5px;
         letter-spacing: 0.01em;
     }
 
@@ -134,6 +140,20 @@ def get_app_css() -> str:
         font-size: 0.74rem;
         font-weight: 600;
         white-space: nowrap;
+    }
+
+    .sf-demo-mode-pill {
+        margin-top: 2px;
+        margin-bottom: 8px;
+        padding: 6px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(184, 225, 255, 0.35);
+        background: rgba(46, 163, 255, 0.14);
+        color: #CBE9FF;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        text-align: center;
     }
 
     .sf-trust-row {
@@ -261,6 +281,29 @@ def get_app_css() -> str:
         border: 1px solid #D0DCE8;
     }
 
+    .sf-summary-pill {
+        border: 1px solid #D4E0EC;
+        border-radius: 10px;
+        padding: 8px 9px;
+        background: #FFFFFF;
+        min-height: 62px;
+    }
+
+    .sf-summary-label {
+        color: #5A6C7E;
+        font-size: 0.70rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 3px;
+    }
+
+    .sf-summary-value {
+        color: #12263A;
+        font-size: 0.90rem;
+        font-weight: 700;
+    }
+
     .sf-plan-card {
         border-left: 4px solid #2EA3FF;
     }
@@ -343,7 +386,11 @@ def get_app_css() -> str:
         }
 
         .sf-wordmark {
-            font-size: 1.05rem;
+            font-size: 1.10rem;
+        }
+
+        .sf-tagline {
+            font-size: 1.08rem;
         }
 
         .sf-chip {
@@ -372,6 +419,10 @@ def get_app_css() -> str:
 
         [data-testid="stMetricValue"] {
             font-size: 1.1rem;
+        }
+
+        .sf-summary-pill {
+            min-height: 56px;
         }
     }
 

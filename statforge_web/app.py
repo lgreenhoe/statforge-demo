@@ -504,7 +504,7 @@ def _render_drill_library_matches(query: str, category: str | None = None, max_i
 def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]:
     st.sidebar.markdown("### StatForge Demo")
     st.sidebar.caption("Executive coaching workspace")
-    st.sidebar.success(HELP_TEXT["demo_readonly"])
+    st.sidebar.markdown('<div class="sf-demo-mode-pill">Demo Mode • Read-only</div>', unsafe_allow_html=True)
 
     player_options = players["player_name"].tolist()
     default_player = player_options[0] if player_options else ""
@@ -547,9 +547,9 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
                     scoped_games["_parsed_date"].between(date_range[0], date_range[1], inclusive="both")
                 ].drop(columns=["_parsed_date"])
         else:
-            st.sidebar.caption("Date range selector unavailable for this dataset.")
+            st.sidebar.caption("Demo dataset limitation: date range is unavailable in this sample.")
     else:
-        st.sidebar.caption("Date range selector unavailable for this dataset.")
+        st.sidebar.caption("Demo dataset limitation: date range is unavailable in this sample.")
 
     scoped_games = scoped_games.sort_values(["season_label", "game_no"], ascending=[False, False])
     game_options = ["All"] + [
@@ -629,7 +629,7 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
             f'<span class="sf-chip">Game: {game}</span>'
             '</div>'
             '<div class="sf-trust-row">'
-            '<span>Demo Dataset Snapshot • Feb 2026</span>'
+            '<span>Last Updated: Demo Dataset Snapshot • Feb 2026</span>'
             '<span>Logic Version • v0.9 (Preview)</span>'
             '</div></div>'
         ),
@@ -708,7 +708,7 @@ def _render_kpi_cards(
                 help=card["help"],
             )
             st.caption(
-                f"What changed recently? Last 5: {_fmt_signed(card['delta5'], places=3)} | Last 10: {_fmt_signed(card['delta10'], places=3)}"
+                f"Season vs Recent: Last 5 {_fmt_signed(card['delta5'], places=3)} | Last 10 {_fmt_signed(card['delta10'], places=3)}"
             )
             st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -740,13 +740,21 @@ def _render_training_suggestions(metric_pack: dict[str, float | None]) -> None:
 def _render_dashboard_coach_summary(metric_pack: dict[str, float | None]) -> None:
     st.markdown('<div class="sf-card sf-standout">', unsafe_allow_html=True)
     st.markdown('<div class="sf-card-title">Coach Summary</div>', unsafe_allow_html=True)
-    st.caption("Quick interpretation from the currently filtered sample.")
-    st.markdown(
-        f"- OPS trend: **{_delta_label(metric_pack.get('ops_delta_last5_vs_season'))}**\n"
-        f"- K-rate trend: **{_delta_label(metric_pack.get('k_rate_delta_last5_vs_season'), inverse_better=True)}**\n"
-        f"- Pop time: **{_delta_label(metric_pack.get('pop_delta_last5_vs_season'), inverse_better=True)}**\n"
-        f"- Exchange time: **{_delta_label(metric_pack.get('transfer_delta_last5_vs_season'), inverse_better=True)}**"
-    )
+    st.caption("Current-scope reading using season baseline versus recent sample movement.")
+    status_items = [
+        ("OPS Trend", _delta_label(metric_pack.get("ops_delta_last5_vs_season")).title()),
+        ("K-Rate Trend", _delta_label(metric_pack.get("k_rate_delta_last5_vs_season"), inverse_better=True).title()),
+        ("Pop Time", _delta_label(metric_pack.get("pop_delta_last5_vs_season"), inverse_better=True).title()),
+        ("Exchange", _delta_label(metric_pack.get("transfer_delta_last5_vs_season"), inverse_better=True).title()),
+    ]
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    for col, (label, value) in zip([c1, c2, c3, c4], status_items):
+        with col:
+            st.markdown(
+                f'<div class="sf-summary-pill"><div class="sf-summary-label">{label}</div><div class="sf-summary-value">{value}</div></div>',
+                unsafe_allow_html=True,
+            )
+    st.caption("Use these status callouts to prioritize this week’s development plan.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
