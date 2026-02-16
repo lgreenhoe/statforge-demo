@@ -74,6 +74,16 @@ RESET_FILTERS_KEY = "sidebar_reset_filters"
 COACH_NOTES_KEY = "coach_notes"
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+DEMO_MODE = _env_flag("STATFORGE_DEMO_MODE", default=True)
+
+
 def _query_param_value(name: str) -> str | None:
     try:
         raw = st.query_params.get(name)
@@ -109,6 +119,40 @@ def _inject_noindex() -> None:
 
 def _inject_styles() -> None:
     st.markdown(get_app_css(), unsafe_allow_html=True)
+
+
+def _render_draft_mode_banner() -> None:
+    if not DEMO_MODE:
+        return
+    st.warning("🟡 Draft Mode — Edits are temporary and will NOT be saved in this demo")
+    st.caption("Live saving will be enabled in the production release.")
+
+
+def safe_save(action_name: str = "save") -> bool:
+    if DEMO_MODE:
+        st.warning("Demo Mode: Changes are not saved. This preview is for workflow testing only.")
+        try:
+            st.toast("Demo Mode: Changes are not saved.")
+        except Exception:
+            pass
+        return False
+    return True
+
+
+def safe_db_write(action_name: str = "db_write") -> bool:
+    return safe_save(action_name)
+
+
+def safe_export(action_name: str = "export") -> bool:
+    if DEMO_MODE:
+        st.warning("Demo Mode: Changes are not saved. This preview is for workflow testing only.")
+        st.info("Draft Mode blocks export in this demo environment.")
+        try:
+            st.toast("Draft Mode: export disabled")
+        except Exception:
+            pass
+        return False
+    return True
 
 
 def _expected_password() -> str | None:
@@ -459,6 +503,8 @@ def _render_share_view(ctx: dict[str, Any]) -> None:
         f"Current filters: {ctx['player']['player_name']} | {ctx['season']} | {ctx['selected_game_label']}"
     )
     if st.sidebar.button("Apply filters to URL", use_container_width=True):
+        if not safe_save("apply"):
+            return
         try:
             st.query_params.clear()
             for key, value in params.items():
@@ -477,15 +523,21 @@ def _render_sidebar_export(ctx: dict[str, Any], games_df: pd.DataFrame, practice
         placeholder="Add temporary coaching notes for this filtered view...",
         help="Stored in browser session only; never written to disk.",
     )
+    st.sidebar.caption("Draft only — resets if page reloads")
     ctx["coach_notes"] = str(st.session_state.get(COACH_NOTES_KEY, "")).strip()
     st.sidebar.markdown("#### Export")
-    st.sidebar.download_button(
-        label="Export current view to CSV",
-        data=_build_export_csv(ctx, games_df, practice_df, summaries_df),
-        file_name="statforge_current_view.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    if DEMO_MODE:
+        if st.sidebar.button("Export current view to CSV", use_container_width=True, key="sidebar_export_blocked"):
+            safe_export("export")
+        st.sidebar.caption("Draft only — resets if page reloads")
+    else:
+        st.sidebar.download_button(
+            label="Export current view to CSV",
+            data=_build_export_csv(ctx, games_df, practice_df, summaries_df),
+            file_name="statforge_current_view.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 
 def _render_drill_library_matches(query: str, category: str | None = None, max_items: int = 2) -> None:
@@ -1143,13 +1195,18 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
     st.markdown("</div>", unsafe_allow_html=True)
 
     plan_text = "\n".join(plan_lines).strip()
-    st.download_button(
-        label="Download Plan (TXT)",
-        data=plan_text,
-        file_name="statforge_development_plan.txt",
-        mime="text/plain",
-        use_container_width=False,
-    )
+    if DEMO_MODE:
+        if st.button("Download Plan (TXT)", key="plan_export_blocked"):
+            safe_export("export")
+        st.caption("Draft only — resets if page reloads")
+    else:
+        st.download_button(
+            label="Download Plan (TXT)",
+            data=plan_text,
+            file_name="statforge_development_plan.txt",
+            mime="text/plain",
+            use_container_width=False,
+        )
 
 
 def _render_games(ctx: dict[str, Any]) -> None:
@@ -1233,6 +1290,7 @@ def _render_practice(practice_df: pd.DataFrame) -> None:
     categories = sorted({item["category"] for item in DRILL_LIBRARY})
     drill_category = st.selectbox("Category", options=["All"] + categories, key="drill_category_filter")
     drill_query = st.text_input("Search drills", value="", placeholder="e.g., transfer, strikeout, footwork")
+    st.caption("Draft only — resets if page reloads")
     filtered_drills = filter_drill_library(category=drill_category, search_text=drill_query)
 
     if not filtered_drills:
@@ -1396,12 +1454,17 @@ def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
             "empty_export_reset",
         )
     csv_blob = _build_export_csv(ctx, ctx["scoped_games"], practice_df, summaries_df)
-    st.download_button(
-        label="Export current view to CSV",
-        data=csv_blob,
-        file_name="statforge_current_view.csv",
-        mime="text/csv",
-    )
+    if DEMO_MODE:
+        if st.button("Export current view to CSV", key="export_tab_blocked"):
+            safe_export("export")
+        st.caption("Draft only — resets if page reloads")
+    else:
+        st.download_button(
+            label="Export current view to CSV",
+            data=csv_blob,
+            file_name="statforge_current_view.csv",
+            mime="text/csv",
+        )
     st.caption("Includes filter context plus in-scope games, practice, and summary rows.")
 
 
@@ -1434,6 +1497,7 @@ def main() -> None:
 
     if not _password_gate():
         return
+    _render_draft_mode_banner()
 
     players, games, practice, summaries = _load_demo_data()
     if players.empty:
