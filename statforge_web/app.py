@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 from typing import Any
-from io import StringIO
+from urllib.parse import urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -64,6 +66,37 @@ METRIC_LABELS = {
     "pb_rate": "PB Rate",
 }
 DATE_COLUMNS = ("date", "game_date", "session_date", "event_date")
+PLAYER_FILTER_KEY = "sidebar_player"
+SEASON_FILTER_KEY = "sidebar_season"
+GAME_FILTER_KEY = "sidebar_game"
+NAV_FILTER_KEY = "sidebar_nav"
+RESET_FILTERS_KEY = "sidebar_reset_filters"
+
+
+def _query_param_value(name: str) -> str | None:
+    try:
+        raw = st.query_params.get(name)
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return str(raw[0]) if raw else None
+    return str(raw)
+
+
+def _safe_default_from_query(
+    key: str, options: list[str], default: str, query_name: str | None = None
+) -> str:
+    current = st.session_state.get(key)
+    if current in options:
+        return str(current)
+    query_val = _query_param_value(query_name or key)
+    if query_val in options:
+        st.session_state[key] = query_val
+        return query_val
+    st.session_state[key] = default
+    return default
 
 
 def _inject_noindex() -> None:
@@ -98,13 +131,31 @@ def _password_gate() -> bool:
         return True
 
     st.subheader("Private Demo Access")
-    provided = st.text_input("Password", type="password")
-    if st.button("Enter Demo"):
+    with st.form("demo_access_form", clear_on_submit=False):
+        provided = st.text_input("Password", type="password")
+        remember_session = st.checkbox(
+            "Remember me this session",
+            value=bool(st.session_state.get("remember_me", True)),
+            help="Keep the demo unlocked for this browser session.",
+        )
+        submitted = st.form_submit_button("Enter Demo")
+
+    if submitted:
         if provided == expected:
-            st.session_state["authed"] = True
-            st.rerun()
-        else:
-            st.error("Invalid password.")
+            st.session_state["remember_me"] = remember_session
+            st.session_state["auth_error"] = ""
+            if remember_session:
+                st.session_state["authed"] = True
+                st.rerun()
+            return True
+        st.session_state["auth_error"] = (
+            "Incorrect password. Please try again. "
+            "If this is a shared demo, verify APP_PASSWORD or STATFORGE_WEB_PASSWORD is set correctly."
+        )
+
+    auth_error = st.session_state.get("auth_error")
+    if auth_error:
+        st.error(str(auth_error))
     return False
 
 
@@ -307,9 +358,19 @@ def _build_filtered_export_frame(
 
 def _build_export_csv(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> str:
     export_df = _build_filtered_export_frame(ctx, games_df, practice_df, summaries_df)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    date_range = ctx.get("date_range")
+    date_txt = "All" if not date_range else f"{date_range[0].date().isoformat()} to {date_range[1].date().isoformat()}"
+    header_lines = [
+        f"# Export generated_at_utc: {timestamp}",
+        f"# Filter player: {ctx['player']['player_name']}",
+        f"# Filter season: {ctx['season']}",
+        f"# Filter game: {ctx['selected_game_label']}",
+        f"# Filter date_range: {date_txt}",
+    ]
     buffer = StringIO()
     export_df.to_csv(buffer, index=False)
-    return buffer.getvalue()
+    return "\n".join(header_lines) + "\n" + buffer.getvalue()
 
 
 def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame) -> None:
@@ -326,6 +387,27 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
         f"Date Range: {date_txt}\n"
         f"Games in Scope: {len(games_df)}"
     )
+
+
+def _render_share_view(ctx: dict[str, Any]) -> None:
+    params = {
+        "player": str(ctx["player"]["player_name"]),
+        "season": str(ctx["season"]),
+        "game": str(ctx["selected_game_label"]),
+        "section": str(ctx["section"]),
+    }
+    query_string = urlencode(params)
+    st.sidebar.markdown("#### Share this view")
+    st.sidebar.caption("Copy this query string and append it to the app URL:")
+    st.sidebar.code(f"?{query_string}", language="text")
+    if st.sidebar.button("Apply filters to URL", use_container_width=True):
+        try:
+            st.query_params.clear()
+            for key, value in params.items():
+                st.query_params[key] = value
+            st.sidebar.success("URL updated with current filters.")
+        except Exception:
+            st.sidebar.info("Query parameters are not supported in this environment.")
 
 
 def _render_sidebar_export(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
@@ -357,13 +439,18 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
     st.sidebar.caption("Executive coaching workspace")
     st.sidebar.success(HELP_TEXT["demo_readonly"])
 
-    player_name = st.sidebar.selectbox("Player", options=players["player_name"].tolist())
+    player_options = players["player_name"].tolist()
+    default_player = player_options[0] if player_options else ""
+    _safe_default_from_query(PLAYER_FILTER_KEY, player_options, default_player, query_name="player")
+    player_name = st.sidebar.selectbox("Player", options=player_options, key=PLAYER_FILTER_KEY)
     player_row = players.loc[players["player_name"] == player_name].iloc[0]
     player_id = int(player_row["player_id"])
 
     player_games = games.loc[games["player_id"] == player_id].copy()
     seasons = sorted(player_games["season_label"].dropna().astype(str).unique().tolist())
-    season = st.sidebar.selectbox("Season", options=["All"] + seasons)
+    season_options = ["All"] + seasons
+    _safe_default_from_query(SEASON_FILTER_KEY, season_options, "All", query_name="season")
+    season = st.sidebar.selectbox("Season", options=season_options, key=SEASON_FILTER_KEY)
 
     if season != "All":
         scoped_games = player_games.loc[player_games["season_label"].astype(str) == season].copy()
@@ -401,14 +488,21 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
     game_options = ["All"] + [
         f"{row['season_label']} • Game {int(row['game_no'])}" for _, row in scoped_games.iterrows()
     ]
-    selected_game_label = st.sidebar.selectbox("Game", options=game_options)
+    _safe_default_from_query(GAME_FILTER_KEY, game_options, "All", query_name="game")
+    selected_game_label = st.sidebar.selectbox("Game", options=game_options, key=GAME_FILTER_KEY)
 
     nav_options = [f"{NAV_ICONS.get(screen, '')} {screen}" for screen in NAV_SCREENS]
     default_nav = f"{NAV_ICONS.get('Dashboard', '')} Dashboard"
+    section_from_query = _query_param_value("section")
+    if section_from_query:
+        section_candidate = f"{NAV_ICONS.get(section_from_query, '')} {section_from_query}"
+        if section_candidate in nav_options:
+            st.session_state[NAV_FILTER_KEY] = section_candidate
+    _safe_default_from_query(NAV_FILTER_KEY, nav_options, default_nav, query_name="section")
     tk_screen_with_icon = st.sidebar.selectbox(
         "Navigation",
         options=nav_options,
-        index=nav_options.index(default_nav) if default_nav in nav_options else 0,
+        key=NAV_FILTER_KEY,
     )
     tk_screen = tk_screen_with_icon.split(" ", 1)[1] if " " in tk_screen_with_icon else tk_screen_with_icon
 
@@ -424,6 +518,14 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         "Trends": "Trends",
     }
     section = nav_map.get(tk_screen, "Dashboard")
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Reset filters", key=RESET_FILTERS_KEY, use_container_width=True):
+        st.session_state[PLAYER_FILTER_KEY] = default_player
+        st.session_state[SEASON_FILTER_KEY] = "All"
+        st.session_state[GAME_FILTER_KEY] = "All"
+        st.session_state[NAV_FILTER_KEY] = default_nav
+        st.rerun()
 
     st.sidebar.markdown("---")
     st.sidebar.caption("Read-only preview. Desktop app handles all editing and saves.")
@@ -688,6 +790,16 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
     st.subheader("Dashboard")
     st.caption(HELP_TEXT["dashboard"])
     st.markdown(SECTION_GAP_MD, unsafe_allow_html=True)
+    with st.expander("Getting Started", expanded=False):
+        st.markdown(
+            "- **What this demo is:** A read-only StatForge sample workspace using anonymized data.\n"
+            "- **How to use filters:** Choose player, season, and game context from the sidebar.\n"
+            "- **Dashboard:** KPI snapshot, trend summaries, and coach-facing insights.\n"
+            "- **Development Plan:** Deterministic recommendation engine and drill matches.\n"
+            "- **Games / Practice:** Filtered history tables and drill library browsing.\n"
+            "- **Trends / Pop Time:** Trendline visuals and catcher timing snapshots.\n"
+            "- **Export:** Download the current filtered view as CSV."
+        )
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
     if games_sorted.empty:
         st.info(HELP_TEXT["games_empty"])
@@ -1111,6 +1223,8 @@ def _render_pop_time(practice_df: pd.DataFrame) -> None:
 def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
     st.subheader("Export")
     st.caption("Read-only export for the current filtered view.")
+    if ctx["scoped_games"].empty and practice_df.empty and summaries_df.empty:
+        st.info("No filtered rows found. The export will include filter metadata only.")
     csv_blob = _build_export_csv(ctx, ctx["scoped_games"], practice_df, summaries_df)
     st.download_button(
         label="Export current view to CSV",
@@ -1152,6 +1266,9 @@ def main() -> None:
         return
 
     players, games, practice, summaries = _load_demo_data()
+    if players.empty:
+        st.error("No players are available in the demo dataset. Please verify demo_data files.")
+        return
     ctx = _build_sidebar(players, games)
 
     player_id = ctx["player_id"]
@@ -1191,6 +1308,7 @@ def main() -> None:
 
     ctx["scoped_games"] = scoped_games
     _render_sidebar_filters_summary(ctx, scoped_games)
+    _render_share_view(ctx)
     _render_sidebar_export(ctx, scoped_games, scoped_practice, scoped_summaries)
 
     _render_top_header(ctx)
