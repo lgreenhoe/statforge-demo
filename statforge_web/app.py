@@ -55,7 +55,7 @@ NAV_ICONS = {
     "Dashboard": "📊",
     "Trends": "📈",
 }
-WEB_SECTIONS = ["Dashboard", "Development Plan ⭐", "Games", "Practice", "Trends", "Pop Time", "Export"]
+WEB_SECTIONS = ["Dashboard", "Quick Entry", "Development Plan ⭐", "Games", "Practice", "Trends", "Pop Time", "Export"]
 METRIC_LABELS = {
     "avg": "AVG",
     "obp": "OBP",
@@ -74,6 +74,7 @@ GAME_FILTER_KEY = "sidebar_game"
 NAV_FILTER_KEY = "sidebar_nav"
 RESET_FILTERS_KEY = "sidebar_reset_filters"
 COACH_NOTES_KEY = "coach_notes"
+COACH_MODE_KEY = "coach_mode"
 
 
 def _env_flag(name: str, default: bool = True) -> bool:
@@ -726,6 +727,69 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
     )
 
 
+def _render_viewing_context(ctx: dict[str, Any]) -> None:
+    st.caption(
+        f"Viewing: {ctx['player']['player_name']} | Season: {ctx['season']} | Game: {ctx['selected_game_label']}"
+    )
+
+
+def _build_coach_summary_text(ctx: dict[str, Any], scoped_games: pd.DataFrame, scoped_practice: pd.DataFrame) -> str:
+    season_metrics = _window_metrics(scoped_games)
+    metric_pack = _build_recommendation_metrics(scoped_games, scoped_practice)
+    recs = generate_recommendations(metric_pack, max_items=1)
+    top_focus = recs[0].title if recs else "Maintain consistency and monitor trends"
+    drill_lines: list[str] = []
+    if recs and recs[0].drills:
+        for drill in recs[0].drills[:2]:
+            drill_lines.append(f"- {drill.name}: {drill.reps_sets}")
+    else:
+        drill_lines = [
+            "- Contact Ladder: 3x8 swings",
+            "- Quick Transfer Reps: 3x10 reps",
+        ]
+
+    lines = [
+        f"Player: {ctx['player']['player_name']}",
+        f"Team: {ctx.get('team', 'All Teams')}",
+        f"Season: {ctx['season']}",
+        f"Game Filter: {ctx['selected_game_label']}",
+        "",
+        "Key Trend Bullets:",
+        f"- OPS: {_fmt_rate(season_metrics.get('ops'))}",
+        f"- K-rate: {_fmt_percent(season_metrics.get('k_rate'))}",
+        f"- CS%: {_fmt_percent(season_metrics.get('cs_pct'))}",
+        f"- Pop Time Avg: {_fmt_seconds(metric_pack.get('pop_time_avg'), 2)}",
+        "",
+        f"Top Focus Area: {top_focus}",
+        "Top 2 Drills:",
+        *drill_lines,
+        "",
+        "Draft Mode Disclaimer: Edits are temporary and will NOT be saved in this demo.",
+    ]
+    return "\n".join(lines)
+
+
+def _render_header_actions(ctx: dict[str, Any], scoped_games: pd.DataFrame, scoped_practice: pd.DataFrame) -> None:
+    c1, c2 = st.columns([1, 2], gap="small")
+    with c1:
+        st.toggle(
+            "Coach Mode",
+            key=COACH_MODE_KEY,
+            help="Prioritize summary and quick actions while keeping all sections accessible.",
+        )
+    with c2:
+        if st.button("Copy Coach Summary", key="copy_coach_summary_btn"):
+            st.session_state["coach_summary_text"] = _build_coach_summary_text(ctx, scoped_games, scoped_practice)
+    coach_text = st.session_state.get("coach_summary_text", "")
+    if coach_text:
+        st.text_area(
+            "Coach Summary (copy using the clipboard icon)",
+            value=coach_text,
+            height=180,
+            key="coach_summary_output",
+        )
+
+
 def _render_kpi_cards(
     season_metrics: dict[str, float | None],
     last5_metrics: dict[str, float | None],
@@ -1033,44 +1097,49 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
     _render_dashboard_coach_summary(metric_pack)
     _render_key_metric_help_row(season_metrics, metric_pack)
     _render_kpi_cards(season_metrics, last5_metrics, last10_metrics, practice_df)
-    st.info(
-        "How this helps\n"
-        "- Surfaces trend changes faster than manual stat review\n"
-        "- Reduces spreadsheet reconciliation time\n"
-        "- Focuses coaching conversations on development signals"
-    )
+    if not st.session_state.get(COACH_MODE_KEY, False):
+        st.info(
+            "How this helps\n"
+            "- Surfaces trend changes faster than manual stat review\n"
+            "- Reduces spreadsheet reconciliation time\n"
+            "- Focuses coaching conversations on development signals"
+        )
     _render_momentum_visual(games_sorted)
     _render_training_suggestions(metric_pack)
 
-    st.markdown('<div class="sf-card">', unsafe_allow_html=True)
-    st.markdown('<div class="sf-card-title">Performance Trends</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="sf-card-subtitle">Compares current scope against the most recent 5 and 10 games.</div>',
-        unsafe_allow_html=True,
+    trends_container = st.container() if not st.session_state.get(COACH_MODE_KEY, False) else st.expander(
+        "Performance Trends (Detailed)", expanded=False
     )
-    trend_rows: list[dict[str, str]] = []
-    for key, label in METRIC_LABELS.items():
-        season_val = season_metrics[key]
-        l5_val = last5_metrics[key]
-        l10_val = last10_metrics[key]
-        delta5 = None if l5_val is None or season_val is None else (l5_val - season_val)
-        delta10 = None if l10_val is None or season_val is None else (l10_val - season_val)
-        inverse = key in {"k_rate", "pb_rate"}
-        trend_rows.append(
-            {
-                "Metric": label,
-                "Season": _fmt_metric_for_table(key, season_val),
-                "Last 5": _fmt_metric_for_table(key, l5_val),
-                "Δ vs Season (5)": _fmt_metric_for_table(key, delta5) if delta5 is not None else "—",
-                "Trend (5)": "—" if delta5 is None else _trend_arrow(delta5, inverse_better=inverse),
-                "Last 10": _fmt_metric_for_table(key, l10_val),
-                "Δ vs Season (10)": _fmt_metric_for_table(key, delta10) if delta10 is not None else "—",
-                "Trend (10)": "—" if delta10 is None else _trend_arrow(delta10, inverse_better=inverse),
-            }
+    with trends_container:
+        st.markdown('<div class="sf-card">', unsafe_allow_html=True)
+        st.markdown('<div class="sf-card-title">Performance Trends</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="sf-card-subtitle">Compares current scope against the most recent 5 and 10 games.</div>',
+            unsafe_allow_html=True,
         )
-    st.dataframe(pd.DataFrame(trend_rows), use_container_width=True, hide_index=True)
-    st.caption("Based on filtered demo data only.")
-    st.markdown("</div>", unsafe_allow_html=True)
+        trend_rows: list[dict[str, str]] = []
+        for key, label in METRIC_LABELS.items():
+            season_val = season_metrics[key]
+            l5_val = last5_metrics[key]
+            l10_val = last10_metrics[key]
+            delta5 = None if l5_val is None or season_val is None else (l5_val - season_val)
+            delta10 = None if l10_val is None or season_val is None else (l10_val - season_val)
+            inverse = key in {"k_rate", "pb_rate"}
+            trend_rows.append(
+                {
+                    "Metric": label,
+                    "Season": _fmt_metric_for_table(key, season_val),
+                    "Last 5": _fmt_metric_for_table(key, l5_val),
+                    "Δ vs Season (5)": _fmt_metric_for_table(key, delta5) if delta5 is not None else "—",
+                    "Trend (5)": "—" if delta5 is None else _trend_arrow(delta5, inverse_better=inverse),
+                    "Last 10": _fmt_metric_for_table(key, l10_val),
+                    "Δ vs Season (10)": _fmt_metric_for_table(key, delta10) if delta10 is not None else "—",
+                    "Trend (10)": "—" if delta10 is None else _trend_arrow(delta10, inverse_better=inverse),
+                }
+            )
+        st.dataframe(pd.DataFrame(trend_rows), use_container_width=True, hide_index=True)
+        st.caption("Based on filtered demo data only.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     totals_cols = [
         "ab",
@@ -1206,7 +1275,7 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
         st.markdown(f"**Time estimate:** {time_estimate}")
         st.markdown(f"**Drills:** {drill_names}")
         st.markdown(f"**Coaching cues:** {cues}")
-        with st.expander("View drill details", expanded=(idx == 1)):
+        with st.expander("View drill details", expanded=(idx == 1 and not st.session_state.get(COACH_MODE_KEY, False))):
             for drill in rec.drills:
                 st.markdown(
                     f"- **{drill.name}**  \n"
@@ -1506,6 +1575,136 @@ def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
     st.caption("Includes filter context plus in-scope games, practice, and summary rows.")
 
 
+def _render_quick_entry(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
+    st.subheader("Quick Entry")
+    st.caption("Fast, draft-only stat entry for workflow testing. Nothing is persisted in this demo.")
+
+    with st.form("quick_entry_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns(3, gap="small")
+        with c1:
+            session_date = st.date_input("Date", value=datetime.now().date(), key="quick_entry_date")
+        with c2:
+            session_type = st.selectbox("Session Type", options=["Practice", "Game"], key="quick_entry_type")
+        with c3:
+            opponent = st.text_input("Opponent (optional)", value="", key="quick_entry_opp")
+
+        st.markdown("**Batting**")
+        b1, b2, b3, b4, b5 = st.columns(5, gap="small")
+        ab = b1.number_input("AB", min_value=0, value=0, step=1, key="quick_entry_ab")
+        h = b2.number_input("H", min_value=0, value=0, step=1, key="quick_entry_h")
+        bb = b3.number_input("BB", min_value=0, value=0, step=1, key="quick_entry_bb")
+        so = b4.number_input("SO", min_value=0, value=0, step=1, key="quick_entry_so")
+        rbi = b5.number_input("RBI", min_value=0, value=0, step=1, key="quick_entry_rbi")
+
+        st.markdown("**Running**")
+        r1, r2 = st.columns(2, gap="small")
+        sb = r1.number_input("SB", min_value=0, value=0, step=1, key="quick_entry_sb")
+        cs = r2.number_input("CS", min_value=0, value=0, step=1, key="quick_entry_cs")
+
+        st.markdown("**Catching**")
+        k1, k2, k3 = st.columns(3, gap="small")
+        innings_caught = k1.number_input("Innings caught", min_value=0.0, value=0.0, step=0.5, key="quick_entry_ic")
+        pb = k2.number_input("PB", min_value=0, value=0, step=1, key="quick_entry_pb")
+        pop_single = k3.number_input("Pop time (single)", min_value=0.0, value=0.0, step=0.01, key="quick_entry_pop")
+        pop_list = st.text_input("Pop time list (optional, comma separated)", value="", key="quick_entry_pop_list")
+        st.caption("Draft only — resets if page reloads")
+        preview = st.form_submit_button("Preview Summary", use_container_width=True)
+
+    if not preview:
+        return
+
+    baseline_games = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
+    baseline_metrics = _window_metrics(baseline_games)
+    baseline_pack = _build_recommendation_metrics(baseline_games, practice_df)
+
+    pop_values: list[float] = []
+    if pop_single > 0:
+        pop_values.append(float(pop_single))
+    if pop_list.strip():
+        for token in pop_list.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                pop_values.append(float(token))
+            except ValueError:
+                continue
+    pop_avg = sum(pop_values) / len(pop_values) if pop_values else None
+
+    totals = {
+        "ab": float(ab),
+        "h": float(h),
+        "doubles": 0.0,
+        "triples": 0.0,
+        "hr": 0.0,
+        "bb": float(bb),
+        "so": float(so),
+        "rbi": float(rbi),
+        "sb": float(sb),
+        "cs": float(cs),
+        "innings_caught": float(innings_caught),
+        "passed_balls": float(pb),
+        "sb_allowed": 0.0,
+        "cs_caught": 0.0,
+    }
+    entry_hit = compute_hitting_metrics(totals)
+    pa = totals["ab"] + totals["bb"]
+    entry_k_rate = (totals["so"] / pa) if pa else None
+
+    st.markdown('<div class="sf-card sf-standout">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Today’s Session Summary</div>', unsafe_allow_html=True)
+    st.caption(f"{session_type} • {session_date.isoformat()}" + (f" • Opponent: {opponent}" if opponent else ""))
+    st.markdown(
+        f"- OPS: **{_fmt_rate(float(entry_hit.get('OPS', 0.0)))}** (vs baseline {_fmt_signed((float(entry_hit.get('OPS', 0.0)) - float(baseline_metrics.get('ops') or 0.0)) if baseline_metrics.get('ops') is not None else None)})\n"
+        f"- K-rate: **{_fmt_percent(entry_k_rate)}** (baseline {_fmt_percent(baseline_metrics.get('k_rate'))})\n"
+        f"- Pop time: **{_fmt_seconds(pop_avg, 2)}** (baseline {_fmt_seconds(baseline_pack.get('pop_time_avg'), 2)})\n"
+        f"- Exchange proxy: **{_fmt_seconds(float(innings_caught) / max(1.0, float(ab + h + bb + so + 1)), 2)}** (baseline {_fmt_seconds(baseline_pack.get('transfer_avg'), 2)})"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="sf-card">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Suggested Focus for Next Practice</div>', unsafe_allow_html=True)
+    quick_pack = dict(baseline_pack)
+    quick_pack["ops_delta_last5_vs_season"] = (
+        None
+        if baseline_metrics.get("ops") is None
+        else float(entry_hit.get("OPS", 0.0)) - float(baseline_metrics.get("ops") or 0.0)
+    )
+    quick_pack["k_rate_delta_last5_vs_season"] = (
+        None
+        if baseline_metrics.get("k_rate") is None or entry_k_rate is None
+        else float(entry_k_rate) - float(baseline_metrics.get("k_rate") or 0.0)
+    )
+    quick_pack["pop_delta_last5_vs_season"] = (
+        None
+        if pop_avg is None or baseline_pack.get("pop_time_avg") is None
+        else float(pop_avg) - float(baseline_pack.get("pop_time_avg") or 0.0)
+    )
+    recs = generate_recommendations(quick_pack, max_items=2)
+    if recs:
+        for rec in recs:
+            st.markdown(f"- **{rec.title}:** {rec.why_this_triggered}")
+            if rec.drills:
+                st.markdown(f"  - Drill: {rec.drills[0].name} ({rec.drills[0].reps_sets})")
+    else:
+        bullets: list[str] = []
+        if pa > 0 and (totals["h"] / pa) < 0.30:
+            bullets.append("Prioritize contact quality and zone discipline work.")
+        if entry_k_rate is not None and entry_k_rate > 0.25:
+            bullets.append("Add 2-strike contact rounds to reduce strikeout exposure.")
+        if pop_avg is not None and pop_avg > 2.20:
+            bullets.append("Focus on exchange quickness and foot replacement timing.")
+        if not bullets:
+            bullets = [
+                "Run a balanced maintenance session across contact, exchange, and throwing accuracy.",
+                "Track today’s outcome against the same baseline in the next session.",
+            ]
+        for bullet in bullets[:3]:
+            st.markdown(f"- {bullet}")
+    st.caption("Draft only — resets if page reloads")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def _render_selected_section(
     section: str,
     ctx: dict[str, Any],
@@ -1526,6 +1725,8 @@ def _render_selected_section(
         _render_pop_time(practice_df)
     elif section == "Export":
         _render_export(ctx, practice_df, summaries_df)
+    elif section == "Quick Entry":
+        _render_quick_entry(ctx, practice_df)
 
 
 def main() -> None:
@@ -1584,6 +1785,8 @@ def main() -> None:
     _render_sidebar_export(ctx, scoped_games, scoped_practice, scoped_summaries)
 
     _render_top_header(ctx)
+    _render_viewing_context(ctx)
+    _render_header_actions(ctx, scoped_games, scoped_practice)
 
     preferred = ctx["section"]
     ordered_sections = [preferred] + [s for s in WEB_SECTIONS if s != preferred]
