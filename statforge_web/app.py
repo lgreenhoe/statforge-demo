@@ -4,6 +4,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from io import StringIO
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -23,10 +24,11 @@ from statforge_core.metrics import compute_catching_metrics, compute_hitting_met
 from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.recommendations import generate_recommendations
 from statforge_core.season_summary import compute_season_summary_metrics
+from statforge_web.drill_library import DRILL_LIBRARY, filter_drill_library, match_library_drills
+from statforge_web.drills import build_training_suggestions
+from statforge_web.ui_constants import APP_SIGNATURE, APP_SUBTITLE, APP_TITLE, HELP_TEXT, METRIC_HELP, SECTION_GAP_MD
 from statforge_web.ui_styles import get_app_css
 
-APP_TITLE = "StatForge"
-APP_SUBTITLE = "by Anchor & Honor"
 DATA_DIR = Path(__file__).resolve().parent / "demo_data"
 NAV_SCREENS = [
     "Player",
@@ -61,6 +63,7 @@ METRIC_LABELS = {
     "cs_pct": "CS%",
     "pb_rate": "PB Rate",
 }
+DATE_COLUMNS = ("date", "game_date", "session_date", "event_date")
 
 
 def _inject_noindex() -> None:
@@ -259,9 +262,100 @@ def _build_recommendation_metrics(
     }
 
 
+def _delta_label(delta: float | None, inverse_better: bool = False, suffix: str = "") -> str:
+    if delta is None:
+        return "stable"
+    if abs(delta) < 0.005:
+        return "stable"
+    if inverse_better:
+        direction = "improving" if delta < 0 else "declining"
+    else:
+        direction = "up" if delta > 0 else "down"
+    return f"{direction}{suffix}"
+
+
+def _build_filtered_export_frame(
+    ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame
+) -> pd.DataFrame:
+    filter_meta = {
+        "player_name": str(ctx["player"]["player_name"]),
+        "season_filter": str(ctx["season"]),
+        "game_filter": str(ctx["selected_game_label"]),
+        "date_range": (
+            "All"
+            if not ctx.get("date_range")
+            else f"{ctx['date_range'][0].date().isoformat()} to {ctx['date_range'][1].date().isoformat()}"
+        ),
+    }
+    frames: list[pd.DataFrame] = []
+    for source, df in [
+        ("games", games_df.copy()),
+        ("practice", practice_df.copy()),
+        ("season_summaries", summaries_df.copy()),
+    ]:
+        if df.empty:
+            continue
+        enriched = df.copy()
+        enriched.insert(0, "source", source)
+        for k, v in filter_meta.items():
+            enriched[k] = v
+        frames.append(enriched)
+    if not frames:
+        return pd.DataFrame([{"source": "empty", **filter_meta}])
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
+def _build_export_csv(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> str:
+    export_df = _build_filtered_export_frame(ctx, games_df, practice_df, summaries_df)
+    buffer = StringIO()
+    export_df.to_csv(buffer, index=False)
+    return buffer.getvalue()
+
+
+def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame) -> None:
+    date_range = ctx.get("date_range")
+    date_txt = "All dates"
+    if date_range:
+        date_txt = f"{date_range[0].date().isoformat()} to {date_range[1].date().isoformat()}"
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("#### Selected Filters")
+    st.sidebar.caption(
+        f"Player: {ctx['player']['player_name']}\n"
+        f"Season: {ctx['season']}\n"
+        f"Game: {ctx['selected_game_label']}\n"
+        f"Date Range: {date_txt}\n"
+        f"Games in Scope: {len(games_df)}"
+    )
+
+
+def _render_sidebar_export(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
+    st.sidebar.markdown("#### Export")
+    st.sidebar.download_button(
+        label="Export current view to CSV",
+        data=_build_export_csv(ctx, games_df, practice_df, summaries_df),
+        file_name="statforge_current_view.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
+def _render_drill_library_matches(query: str, category: str | None = None, max_items: int = 2) -> None:
+    matches = match_library_drills(query, category=category, limit=max_items)
+    for drill in matches:
+        with st.expander(f"Drill Library: {drill['name']} [{drill['id']}]", expanded=False):
+            st.write(f"**Category:** {drill['category']}  |  **Duration:** {drill['duration_minutes']} min")
+            st.write(f"**Goal:** {drill['goal']}")
+            st.write(f"**Setup:** {drill['setup']}")
+            st.write(f"**Volume:** {drill['reps_volume']}")
+            st.write(f"**Coaching cues:** {drill['coaching_cues']}")
+            st.write(f"**Progression:** {drill['progression']}")
+            st.write(f"**Equipment:** {drill['equipment']}")
+
+
 def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]:
-    st.sidebar.markdown("### StatForge")
-    st.sidebar.caption("Coach workspace")
+    st.sidebar.markdown("### StatForge Demo")
+    st.sidebar.caption("Executive coaching workspace")
+    st.sidebar.success(HELP_TEXT["demo_readonly"])
 
     player_name = st.sidebar.selectbox("Player", options=players["player_name"].tolist())
     player_row = players.loc[players["player_name"] == player_name].iloc[0]
@@ -275,6 +369,33 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         scoped_games = player_games.loc[player_games["season_label"].astype(str) == season].copy()
     else:
         scoped_games = player_games.copy()
+
+    date_col = next((col for col in DATE_COLUMNS if col in scoped_games.columns), None)
+    date_range: tuple[pd.Timestamp, pd.Timestamp] | None = None
+    if date_col:
+        parsed_dates = pd.to_datetime(scoped_games[date_col], errors="coerce").dropna()
+        if not parsed_dates.empty:
+            min_date = parsed_dates.min().date()
+            max_date = parsed_dates.max().date()
+            selected_dates = st.sidebar.date_input(
+                "Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+            )
+            if isinstance(selected_dates, tuple) and len(selected_dates) == 2:
+                start, end = selected_dates
+                date_range = (pd.Timestamp(start), pd.Timestamp(end))
+                scoped_games = scoped_games.assign(
+                    _parsed_date=pd.to_datetime(scoped_games[date_col], errors="coerce")
+                )
+                scoped_games = scoped_games.loc[
+                    scoped_games["_parsed_date"].between(date_range[0], date_range[1], inclusive="both")
+                ].drop(columns=["_parsed_date"])
+        else:
+            st.sidebar.caption("Date range selector unavailable for this dataset.")
+    else:
+        st.sidebar.caption("Date range selector unavailable for this dataset.")
 
     scoped_games = scoped_games.sort_values(["season_label", "game_no"], ascending=[False, False])
     game_options = ["All"] + [
@@ -312,6 +433,7 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         "player_id": player_id,
         "player_games": player_games,
         "scoped_games": scoped_games,
+        "date_range": date_range,
         "season": season,
         "selected_game_label": selected_game_label,
         "tk_screen": tk_screen,
@@ -327,8 +449,8 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
         (
             '<div class="sf-header"><div class="sf-header-top">'
             f'<div class="sf-brand"><div class="sf-wordmark">{APP_TITLE}</div>'
-            '<div class="sf-tagline">Turning Stats into Player Development</div>'
-            f'<div class="sf-subtitle">{APP_SUBTITLE}</div></div>'
+            f'<div class="sf-tagline">{APP_SUBTITLE}</div>'
+            f'<div class="sf-subtitle">{APP_SIGNATURE}</div></div>'
             '<span class="sf-badge">Sample Workspace · Read-only</span>'
             '</div>'
             '<div class="sf-context">'
@@ -350,65 +472,114 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
 def _render_kpi_cards(
     season_metrics: dict[str, float | None],
     last5_metrics: dict[str, float | None],
+    last10_metrics: dict[str, float | None],
     practice_df: pd.DataFrame,
 ) -> None:
-    c1, c2, c3, c4 = st.columns(4)
+    st.markdown('<div class="sf-card">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Key KPIs</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sf-card-subtitle">Season baseline with recent movement against last 5 and last 10 samples.</div>',
+        unsafe_allow_html=True,
+    )
     practice_sorted = practice_df.sort_values(["season_label", "session_no"], ascending=[False, False])
     transfer_avg = practice_sorted["transfer_time"].astype(float).mean() if not practice_sorted.empty else None
     pop_avg = practice_sorted["pop_time"].astype(float).mean() if not practice_sorted.empty else None
     transfer_last5 = practice_sorted.head(5)["transfer_time"].astype(float).mean() if not practice_sorted.empty else None
+    transfer_last10 = practice_sorted.head(10)["transfer_time"].astype(float).mean() if not practice_sorted.empty else None
     pop_last5 = practice_sorted.head(5)["pop_time"].astype(float).mean() if not practice_sorted.empty else None
+    pop_last10 = practice_sorted.head(10)["pop_time"].astype(float).mean() if not practice_sorted.empty else None
 
-    for col, title, value, last5, delta, is_rate in [
-        (
-            c1,
-            "Batting Avg",
-            _fmt_rate(season_metrics["avg"]),
-            _fmt_rate(last5_metrics["avg"]),
-            None if last5_metrics["avg"] is None or season_metrics["avg"] is None else float(last5_metrics["avg"]) - float(season_metrics["avg"]),
-            True,
-        ),
-        (
-            c2,
-            "OPS",
-            _fmt_rate(season_metrics["ops"]),
-            _fmt_rate(last5_metrics["ops"]),
-            None if last5_metrics["ops"] is None or season_metrics["ops"] is None else float(last5_metrics["ops"]) - float(season_metrics["ops"]),
-            True,
-        ),
-        (
-            c3,
-            "Exchange (s)",
-            _fmt_float(transfer_avg),
-            _fmt_float(transfer_last5),
-            None if transfer_last5 is None or transfer_avg is None else float(transfer_last5) - float(transfer_avg),
-            False,
-        ),
-        (
-            c4,
-            "Pop Time (s)",
-            _fmt_float(pop_avg),
-            _fmt_float(pop_last5),
-            None if pop_last5 is None or pop_avg is None else float(pop_last5) - float(pop_avg),
-            False,
-        ),
-    ]:
+    cards = [
+        {
+            "label": "AVG",
+            "help": METRIC_HELP["avg"],
+            "value": _fmt_rate(season_metrics["avg"]),
+            "delta5": None
+            if last5_metrics["avg"] is None or season_metrics["avg"] is None
+            else float(last5_metrics["avg"]) - float(season_metrics["avg"]),
+            "delta10": None
+            if last10_metrics["avg"] is None or season_metrics["avg"] is None
+            else float(last10_metrics["avg"]) - float(season_metrics["avg"]),
+        },
+        {
+            "label": "OPS",
+            "help": METRIC_HELP["ops"],
+            "value": _fmt_rate(season_metrics["ops"]),
+            "delta5": None
+            if last5_metrics["ops"] is None or season_metrics["ops"] is None
+            else float(last5_metrics["ops"]) - float(season_metrics["ops"]),
+            "delta10": None
+            if last10_metrics["ops"] is None or season_metrics["ops"] is None
+            else float(last10_metrics["ops"]) - float(season_metrics["ops"]),
+        },
+        {
+            "label": "Exchange (s)",
+            "help": METRIC_HELP["exchange"],
+            "value": _fmt_float(transfer_avg),
+            "delta5": None if transfer_last5 is None or transfer_avg is None else float(transfer_last5) - float(transfer_avg),
+            "delta10": None if transfer_last10 is None or transfer_avg is None else float(transfer_last10) - float(transfer_avg),
+        },
+        {
+            "label": "Pop Time (s)",
+            "help": METRIC_HELP["pop_time"],
+            "value": _fmt_float(pop_avg),
+            "delta5": None if pop_last5 is None or pop_avg is None else float(pop_last5) - float(pop_avg),
+            "delta10": None if pop_last10 is None or pop_avg is None else float(pop_last10) - float(pop_avg),
+        },
+    ]
+    row_a = st.columns(2, gap="small")
+    row_b = st.columns(2, gap="small")
+    all_cols = [row_a[0], row_a[1], row_b[0], row_b[1]]
+    for col, card in zip(all_cols, cards):
         with col:
-            delta_text = ""
-            helper = "Season: — | Last 5: — | Δ: —"
-            if delta is not None:
-                direction = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
-                signed = _fmt_signed(delta) if not is_rate else _fmt_signed(delta, places=3)
-                delta_text = f'<div class="sf-kpi-delta">{direction} {signed}</div>'
-            season_helper = value if value != "—" else "—"
-            last5_helper = last5 if last5 != "—" else "—"
-            helper_delta = _fmt_signed(delta, places=3) if delta is not None else "—"
-            helper = f"Season: {season_helper} | Last 5: {last5_helper} | Δ: {helper_delta}"
-            st.markdown(
-                f'<div class="sf-kpi-card"><div class="sf-kpi-title">{title}</div>'
-                f'<div class="sf-kpi-value">{value}</div>{delta_text}<div class="sf-kpi-helper">{helper}</div></div>',
-                unsafe_allow_html=True,
+            st.markdown('<div class="sf-kpi-card">', unsafe_allow_html=True)
+            st.metric(
+                label=card["label"],
+                value=card["value"],
+                delta=_fmt_signed(card["delta5"], places=3) if card["delta5"] is not None else "—",
+                help=card["help"],
             )
+            st.caption(
+                f"What changed recently? Last 5: {_fmt_signed(card['delta5'], places=3)} | Last 10: {_fmt_signed(card['delta10'], places=3)}"
+            )
+            st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_training_suggestions(metric_pack: dict[str, float | None]) -> None:
+    st.markdown('<div class="sf-card">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Training Suggestions</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sf-card-subtitle">Deterministic mapping from stat flags to weekly drill plans.</div>',
+        unsafe_allow_html=True,
+    )
+
+    suggestions = build_training_suggestions(metric_pack)
+    for idx, item in enumerate(suggestions, start=1):
+        st.markdown(f"**{idx}. What we're seeing**")
+        st.write(item["what_were_seeing"])
+        st.markdown("**What to do this week**")
+        st.write(item["what_to_do_this_week"])
+        st.markdown("**Drills (10 min, 2x/week)**")
+        for drill in item["drills"]:
+            st.markdown(f"- {drill}")
+            _render_drill_library_matches(drill, max_items=1)
+        if idx < len(suggestions):
+            st.markdown("---")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_dashboard_coach_summary(metric_pack: dict[str, float | None]) -> None:
+    st.markdown('<div class="sf-card sf-standout">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Coach Summary</div>', unsafe_allow_html=True)
+    st.caption("Quick interpretation from the currently filtered sample.")
+    st.markdown(
+        f"- OPS trend: **{_delta_label(metric_pack.get('ops_delta_last5_vs_season'))}**\n"
+        f"- K-rate trend: **{_delta_label(metric_pack.get('k_rate_delta_last5_vs_season'), inverse_better=True)}**\n"
+        f"- Pop time: **{_delta_label(metric_pack.get('pop_delta_last5_vs_season'), inverse_better=True)}**\n"
+        f"- Exchange time: **{_delta_label(metric_pack.get('transfer_delta_last5_vs_season'), inverse_better=True)}**"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _build_recent_trend_insight(perf_df: pd.DataFrame) -> str:
@@ -515,13 +686,20 @@ def _render_momentum_visual(games_sorted: pd.DataFrame) -> None:
 
 def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
     st.subheader("Dashboard")
+    st.caption(HELP_TEXT["dashboard"])
+    st.markdown(SECTION_GAP_MD, unsafe_allow_html=True)
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
+    if games_sorted.empty:
+        st.info(HELP_TEXT["games_empty"])
+        return
 
     season_metrics = _window_metrics(games_sorted)
     last5_metrics = _window_metrics(games_sorted.head(5))
     last10_metrics = _window_metrics(games_sorted.head(10))
+    metric_pack = _build_recommendation_metrics(games_sorted, practice_df)
 
-    _render_kpi_cards(season_metrics, last5_metrics, practice_df)
+    _render_dashboard_coach_summary(metric_pack)
+    _render_kpi_cards(season_metrics, last5_metrics, last10_metrics, practice_df)
     st.info(
         "How this helps\n"
         "- Surfaces trend changes faster than manual stat review\n"
@@ -529,6 +707,7 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
         "- Focuses coaching conversations on development signals"
     )
     _render_momentum_visual(games_sorted)
+    _render_training_suggestions(metric_pack)
 
     st.markdown('<div class="sf-card">', unsafe_allow_html=True)
     st.markdown('<div class="sf-card-title">Performance Trends</div>', unsafe_allow_html=True)
@@ -656,7 +835,7 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
 
 def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
     st.subheader("Development Plan")
-    st.caption("Stat-driven drill recommendations generated from current dashboard metrics.")
+    st.caption(HELP_TEXT["development_plan"])
 
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
     metric_pack = _build_recommendation_metrics(games_sorted, practice_df)
@@ -693,6 +872,7 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
                     f"  Progression: {drill.progression}"
                 )
                 plan_lines.append(f"  - {drill.name}: {drill.reps_sets}")
+                _render_drill_library_matches(drill.name, category=rec.category, max_items=1)
         coach_summary.append(f"{rec.title}: {rec.why_this_triggered}")
         plan_lines.append("")
 
@@ -722,6 +902,9 @@ def _render_games(ctx: dict[str, Any]) -> None:
     st.caption("Game log view. Creation, editing, and deletion are available in the desktop app.")
 
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False]).copy()
+    if games_sorted.empty:
+        st.info(HELP_TEXT["games_empty"])
+        return
     show = games_sorted.rename(
         columns={
             "season_label": "Season",
@@ -757,27 +940,50 @@ def _render_practice(practice_df: pd.DataFrame) -> None:
     st.caption("Practice history view for coaching review. Session edits remain desktop-only.")
 
     if practice_df.empty:
-        st.info("No practice sessions in this demo selection.")
-        return
+        st.info(HELP_TEXT["practice_empty"])
+    else:
+        practice_sorted = practice_df.sort_values(["season_label", "session_no"], ascending=[False, False]).copy()
+        practice_view = practice_sorted.rename(
+            columns={
+                "season_label": "Season",
+                "session_no": "Session #",
+                "transfer_time": "Transfer Time",
+                "pop_time": "Pop Time",
+            }
+        )
+        st.dataframe(practice_view, use_container_width=True, hide_index=True)
 
-    practice_sorted = practice_df.sort_values(["season_label", "session_no"], ascending=[False, False]).copy()
-    practice_view = practice_sorted.rename(
-        columns={
-            "season_label": "Season",
-            "session_no": "Session #",
-            "transfer_time": "Transfer Time",
-            "pop_time": "Pop Time",
-        }
+        count = len(practice_sorted)
+        transfer_avg = float(practice_sorted["transfer_time"].astype(float).mean())
+        pop_avg = float(practice_sorted["pop_time"].astype(float).mean())
+        c1, c2, c3 = st.columns([1, 1, 1], gap="small")
+        c1.metric("Sessions", count)
+        c2.metric("Avg Transfer", _fmt_float(transfer_avg))
+        c3.metric("Avg Pop", _fmt_float(pop_avg))
+
+    st.markdown('<div class="sf-card">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Drill Library</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sf-card-subtitle">Read-only reference library. Filter by category or keyword.</div>',
+        unsafe_allow_html=True,
     )
-    st.dataframe(practice_view, use_container_width=True, hide_index=True)
+    categories = sorted({item["category"] for item in DRILL_LIBRARY})
+    drill_category = st.selectbox("Category", options=["All"] + categories, key="drill_category_filter")
+    drill_query = st.text_input("Search drills", value="", placeholder="e.g., transfer, strikeout, footwork")
+    filtered_drills = filter_drill_library(category=drill_category, search_text=drill_query)
 
-    count = len(practice_sorted)
-    transfer_avg = float(practice_sorted["transfer_time"].astype(float).mean())
-    pop_avg = float(practice_sorted["pop_time"].astype(float).mean())
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Sessions", count)
-    c2.metric("Avg Transfer", _fmt_float(transfer_avg))
-    c3.metric("Avg Pop", _fmt_float(pop_avg))
+    if not filtered_drills:
+        st.info("No drills match the current filter.")
+    for drill in filtered_drills:
+        with st.expander(f"{drill['name']} ({drill['category']})", expanded=False):
+            st.write(f"**ID:** {drill['id']}  |  **Duration:** {drill['duration_minutes']} min")
+            st.write(f"**Goal:** {drill['goal']}")
+            st.write(f"**Setup:** {drill['setup']}")
+            st.write(f"**Volume:** {drill['reps_volume']}")
+            st.write(f"**Coaching cues:** {drill['coaching_cues']}")
+            st.write(f"**Progression:** {drill['progression']}")
+            st.write(f"**Equipment:** {drill['equipment']}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def _render_trends(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
@@ -785,7 +991,7 @@ def _render_trends(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
 
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[True, True])
     if games_sorted.empty:
-        st.info("No game data available for trends.")
+        st.info(HELP_TEXT["trends_empty"])
         return
 
     metric = st.selectbox(
@@ -876,7 +1082,7 @@ def _render_pop_time(practice_df: pd.DataFrame) -> None:
         metric_mode="full_pop",
     )
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3 = st.columns([1, 1, 1], gap="small")
     c1.metric("Transfer", _fmt_float(float(calc["transfer"])))
     c2.metric("Throw", _fmt_float(float(calc["throw_time"] or 0.0)))
     c3.metric("Total Pop", _fmt_float(float(calc["pop_total"])))
@@ -902,11 +1108,17 @@ def _render_pop_time(practice_df: pd.DataFrame) -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _render_export() -> None:
+def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
     st.subheader("Export")
-    st.caption("Report export is available in desktop to preserve local file workflow.")
-    st.button("Export Report (PDF)", disabled=True)
-    st.info("Desktop only: report generation uses local file save and full app context.")
+    st.caption("Read-only export for the current filtered view.")
+    csv_blob = _build_export_csv(ctx, ctx["scoped_games"], practice_df, summaries_df)
+    st.download_button(
+        label="Export current view to CSV",
+        data=csv_blob,
+        file_name="statforge_current_view.csv",
+        mime="text/csv",
+    )
+    st.caption("Includes filter context plus in-scope games, practice, and summary rows.")
 
 
 def _render_selected_section(
@@ -928,7 +1140,7 @@ def _render_selected_section(
     elif section == "Pop Time":
         _render_pop_time(practice_df)
     elif section == "Export":
-        _render_export()
+        _render_export(ctx, practice_df, summaries_df)
 
 
 def main() -> None:
@@ -958,7 +1170,28 @@ def main() -> None:
             (summaries["player_id"] == player_id) & (summaries["season_label"].astype(str) == season)
         ].copy()
 
+    date_range = ctx.get("date_range")
+    if date_range:
+        for col_name in DATE_COLUMNS:
+            if col_name in scoped_games.columns:
+                scoped_games = scoped_games.assign(_parsed_date=pd.to_datetime(scoped_games[col_name], errors="coerce"))
+                scoped_games = scoped_games.loc[
+                    scoped_games["_parsed_date"].between(date_range[0], date_range[1], inclusive="both")
+                ].drop(columns=["_parsed_date"])
+                break
+        for col_name in DATE_COLUMNS:
+            if col_name in scoped_practice.columns:
+                scoped_practice = scoped_practice.assign(
+                    _parsed_date=pd.to_datetime(scoped_practice[col_name], errors="coerce")
+                )
+                scoped_practice = scoped_practice.loc[
+                    scoped_practice["_parsed_date"].between(date_range[0], date_range[1], inclusive="both")
+                ].drop(columns=["_parsed_date"])
+                break
+
     ctx["scoped_games"] = scoped_games
+    _render_sidebar_filters_summary(ctx, scoped_games)
+    _render_sidebar_export(ctx, scoped_games, scoped_practice, scoped_summaries)
 
     _render_top_header(ctx)
 
@@ -971,6 +1204,10 @@ def main() -> None:
 
     st.markdown(
         '<div class="sf-disclaimer">Decision support tool. Not a replacement for coaching judgment.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sf-footer">StatForge Demo • Read-only • Data is anonymized</div>',
         unsafe_allow_html=True,
     )
 

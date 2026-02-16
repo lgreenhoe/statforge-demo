@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+APP_TITLE = "StatForge"
+APP_SUBTITLE = "Turning Stats into Player Development"
+APP_SIGNATURE = "by Anchor & Honor"
+
+SECTION_GAP_MD = '<div style="margin-top:0.45rem;"></div>'
+
+HELP_TEXT = {
+    "dashboard": "Read-only dashboard built from the current player and season filters.",
+    "development_plan": "Deterministic recommendations only. No external services or generated content.",
+    "games_empty": "No games in the current scope. Adjust filters in the sidebar to view stats.",
+    "practice_empty": "No practice sessions in the current scope. Drill Library is still available below.",
+    "trends_empty": "No trend data available for the selected filters.",
+    "demo_readonly": "Demo Mode (Read-only)",
+}
+
+METRIC_HELP = {
+    "avg": "Batting average: hits divided by at-bats.",
+    "ops": "OPS: on-base percentage plus slugging percentage.",
+    "exchange": "Exchange time: glove-to-hand transfer speed in seconds.",
+    "pop_time": "Pop time: total catcher throw time to target in seconds.",
+}
