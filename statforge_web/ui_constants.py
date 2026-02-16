@@ -18,6 +18,8 @@ HELP_TEXT = {
 METRIC_HELP = {
     "avg": "Batting average: hits divided by at-bats.",
     "ops": "OPS: on-base percentage plus slugging percentage.",
+    "k_rate": "K-rate: strikeouts divided by plate appearances; lower is better.",
+    "cs_pct": "CS%: runners caught stealing divided by steal attempts allowed.",
     "exchange": "Exchange time: glove-to-hand transfer speed in seconds.",
     "pop_time": "Pop time: total catcher throw time to target in seconds.",
 }

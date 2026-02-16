@@ -71,6 +71,7 @@ SEASON_FILTER_KEY = "sidebar_season"
 GAME_FILTER_KEY = "sidebar_game"
 NAV_FILTER_KEY = "sidebar_nav"
 RESET_FILTERS_KEY = "sidebar_reset_filters"
+COACH_NOTES_KEY = "coach_notes"
 
 
 def _query_param_value(name: str) -> str | None:
@@ -180,6 +181,18 @@ def _fmt_float(value: float | None, places: int = 3) -> str:
     return f"{value:.{places}f}"
 
 
+def _fmt_seconds(value: float | None, places: int = 2) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.{places}f}s"
+
+
+def _fmt_percent(value: float | None, places: int = 1) -> str:
+    if value is None:
+        return "—"
+    return f"{value * 100:.{places}f}%"
+
+
 def _fmt_signed(value: float | None, places: int = 3) -> str:
     if value is None:
         return "—"
@@ -192,6 +205,39 @@ def _trend_arrow(delta: float, inverse_better: bool = False) -> str:
     if inverse_better:
         return "▲" if delta < 0 else "▼"
     return "▲" if delta > 0 else "▼"
+
+
+def _reset_filters_state() -> None:
+    reset_keys = [
+        PLAYER_FILTER_KEY,
+        SEASON_FILTER_KEY,
+        GAME_FILTER_KEY,
+        NAV_FILTER_KEY,
+        COACH_NOTES_KEY,
+        "trend_inseason_season",
+        "drill_category_filter",
+    ]
+    for key in reset_keys:
+        if key in st.session_state:
+            del st.session_state[key]
+    try:
+        st.query_params.clear()
+    except Exception:
+        pass
+
+
+def _render_empty_state(message: str, hint: str, button_key: str) -> None:
+    st.info(message)
+    st.caption(hint)
+    if st.button("Reset Filters", key=button_key):
+        _reset_filters_state()
+        st.rerun()
+
+
+def _fmt_metric_for_table(metric_key: str, value: float | None) -> str:
+    if metric_key in {"k_rate", "bb_rate", "cs_pct", "pb_rate"}:
+        return _fmt_percent(value)
+    return _fmt_rate(value)
 
 
 def _window_metrics(window_games: pd.DataFrame) -> dict[str, float | None]:
@@ -337,6 +383,7 @@ def _build_filtered_export_frame(
             if not ctx.get("date_range")
             else f"{ctx['date_range'][0].date().isoformat()} to {ctx['date_range'][1].date().isoformat()}"
         ),
+        "coach_notes": str(ctx.get("coach_notes", "")),
     }
     frames: list[pd.DataFrame] = []
     for source, df in [
@@ -367,6 +414,7 @@ def _build_export_csv(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: 
         f"# Filter season: {ctx['season']}",
         f"# Filter game: {ctx['selected_game_label']}",
         f"# Filter date_range: {date_txt}",
+        f"# Coach notes: {str(ctx.get('coach_notes', '')).strip() or '(none)'}",
     ]
     buffer = StringIO()
     export_df.to_csv(buffer, index=False)
@@ -379,7 +427,7 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
     if date_range:
         date_txt = f"{date_range[0].date().isoformat()} to {date_range[1].date().isoformat()}"
     st.sidebar.markdown("---")
-    st.sidebar.markdown("#### Selected Filters")
+    st.sidebar.markdown("#### Current View")
     st.sidebar.caption(
         f"Player: {ctx['player']['player_name']}\n"
         f"Season: {ctx['season']}\n"
@@ -387,6 +435,13 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
         f"Date Range: {date_txt}\n"
         f"Games in Scope: {len(games_df)}"
     )
+    if st.sidebar.button("Reset filters", key=RESET_FILTERS_KEY, use_container_width=True):
+        _reset_filters_state()
+        st.session_state[PLAYER_FILTER_KEY] = str(ctx.get("default_player", ""))
+        st.session_state[SEASON_FILTER_KEY] = "All"
+        st.session_state[GAME_FILTER_KEY] = "All"
+        st.session_state[NAV_FILTER_KEY] = str(ctx.get("default_nav", "📊 Dashboard"))
+        st.rerun()
 
 
 def _render_share_view(ctx: dict[str, Any]) -> None:
@@ -400,6 +455,9 @@ def _render_share_view(ctx: dict[str, Any]) -> None:
     st.sidebar.markdown("#### Share this view")
     st.sidebar.caption("Copy this query string and append it to the app URL:")
     st.sidebar.code(f"?{query_string}", language="text")
+    st.sidebar.caption(
+        f"Current filters: {ctx['player']['player_name']} | {ctx['season']} | {ctx['selected_game_label']}"
+    )
     if st.sidebar.button("Apply filters to URL", use_container_width=True):
         try:
             st.query_params.clear()
@@ -411,6 +469,15 @@ def _render_share_view(ctx: dict[str, Any]) -> None:
 
 
 def _render_sidebar_export(ctx: dict[str, Any], games_df: pd.DataFrame, practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
+    st.sidebar.markdown("#### Coach Notes")
+    st.sidebar.text_area(
+        "Session-only notes",
+        key=COACH_NOTES_KEY,
+        height=110,
+        placeholder="Add temporary coaching notes for this filtered view...",
+        help="Stored in browser session only; never written to disk.",
+    )
+    ctx["coach_notes"] = str(st.session_state.get(COACH_NOTES_KEY, "")).strip()
     st.sidebar.markdown("#### Export")
     st.sidebar.download_button(
         label="Export current view to CSV",
@@ -520,14 +587,6 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
     section = nav_map.get(tk_screen, "Dashboard")
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("Reset filters", key=RESET_FILTERS_KEY, use_container_width=True):
-        st.session_state[PLAYER_FILTER_KEY] = default_player
-        st.session_state[SEASON_FILTER_KEY] = "All"
-        st.session_state[GAME_FILTER_KEY] = "All"
-        st.session_state[NAV_FILTER_KEY] = default_nav
-        st.rerun()
-
-    st.sidebar.markdown("---")
     st.sidebar.caption("Read-only preview. Desktop app handles all editing and saves.")
 
     return {
@@ -540,6 +599,8 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         "selected_game_label": selected_game_label,
         "tk_screen": tk_screen,
         "section": section,
+        "default_player": default_player,
+        "default_nav": default_nav,
     }
 
 
@@ -552,8 +613,13 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
             '<div class="sf-header"><div class="sf-header-top">'
             f'<div class="sf-brand"><div class="sf-wordmark">{APP_TITLE}</div>'
             f'<div class="sf-tagline">{APP_SUBTITLE}</div>'
+            '<div class="sf-tagline-secondary">Demo • Read-only • Anonymized</div>'
             f'<div class="sf-subtitle">{APP_SIGNATURE}</div></div>'
-            '<span class="sf-badge">Sample Workspace · Read-only</span>'
+            '<div class="sf-badge-row">'
+            '<span class="sf-badge">Demo</span>'
+            '<span class="sf-badge">Read-only</span>'
+            '<span class="sf-badge">Anonymized</span>'
+            '</div>'
             '</div>'
             '<div class="sf-context">'
             f'<span class="sf-chip">Player: {player["player_name"]}</span>'
@@ -684,6 +750,57 @@ def _render_dashboard_coach_summary(metric_pack: dict[str, float | None]) -> Non
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _render_executive_summary(metric_pack: dict[str, float | None]) -> None:
+    good_signals: list[str] = []
+    needs_work: list[str] = []
+
+    ops_delta = metric_pack.get("ops_delta_last5_vs_season")
+    k_delta = metric_pack.get("k_rate_delta_last5_vs_season")
+    pop_delta = metric_pack.get("pop_delta_last5_vs_season")
+    cs_pct = metric_pack.get("cs_pct_season")
+
+    if ops_delta is not None and ops_delta > 0:
+        good_signals.append(f"OPS is improving ({_fmt_signed(ops_delta, 3)} vs season baseline).")
+    if k_delta is not None and k_delta < 0:
+        good_signals.append(f"K-rate is trending down ({_fmt_signed(k_delta, 3)} vs season baseline).")
+    if pop_delta is not None and pop_delta < 0:
+        good_signals.append(f"Pop time is improving ({_fmt_signed(pop_delta, 3)}s vs season baseline).")
+    if not good_signals:
+        good_signals.append("Performance trend is stable with no major negative movement.")
+
+    if ops_delta is not None and ops_delta < 0:
+        needs_work.append(f"OPS is below recent baseline ({_fmt_signed(ops_delta, 3)}).")
+    if k_delta is not None and k_delta > 0:
+        needs_work.append(f"K-rate has increased ({_fmt_signed(k_delta, 3)}).")
+    if cs_pct is not None and cs_pct < 0.30:
+        needs_work.append(f"CS% is low for this sample ({_fmt_percent(cs_pct)}).")
+    if not needs_work:
+        needs_work.append("No urgent red flags detected in this filter scope.")
+
+    next_action = (
+        "Run a focused 2x/week catching + plate-discipline block and monitor Last 5 deltas on OPS, K-rate, and Pop time."
+    )
+
+    st.markdown('<div class="sf-card sf-standout">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Executive Summary</div>', unsafe_allow_html=True)
+    st.markdown(
+        f"- **What’s good:** {good_signals[0]}\n"
+        f"- **What needs work:** {needs_work[0]}\n"
+        f"- **What to do next:** {next_action}"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_key_metric_help_row(season_metrics: dict[str, float | None], metric_pack: dict[str, float | None]) -> None:
+    c1, c2, c3 = st.columns(3, gap="small")
+    c4, c5 = st.columns(2, gap="small")
+    c1.metric("OPS", _fmt_rate(season_metrics.get("ops")), help=METRIC_HELP["ops"])
+    c2.metric("K-rate", _fmt_percent(season_metrics.get("k_rate")), help=METRIC_HELP["k_rate"])
+    c3.metric("CS%", _fmt_percent(season_metrics.get("cs_pct")), help=METRIC_HELP["cs_pct"])
+    c4.metric("Pop time", _fmt_seconds(metric_pack.get("pop_time_avg"), 2), help=METRIC_HELP["pop_time"])
+    c5.metric("Exchange", _fmt_seconds(metric_pack.get("transfer_avg"), 2), help=METRIC_HELP["exchange"])
+
+
 def _build_recent_trend_insight(perf_df: pd.DataFrame) -> str:
     if perf_df.empty or len(perf_df) < 3:
         return "Insight: Not enough recent data to summarize trends."
@@ -802,7 +919,11 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
         )
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
     if games_sorted.empty:
-        st.info(HELP_TEXT["games_empty"])
+        _render_empty_state(
+            HELP_TEXT["games_empty"],
+            "Try selecting 'All' season or clearing game filters to restore data.",
+            "empty_dashboard_reset",
+        )
         return
 
     season_metrics = _window_metrics(games_sorted)
@@ -810,7 +931,9 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
     last10_metrics = _window_metrics(games_sorted.head(10))
     metric_pack = _build_recommendation_metrics(games_sorted, practice_df)
 
+    _render_executive_summary(metric_pack)
     _render_dashboard_coach_summary(metric_pack)
+    _render_key_metric_help_row(season_metrics, metric_pack)
     _render_kpi_cards(season_metrics, last5_metrics, last10_metrics, practice_df)
     st.info(
         "How this helps\n"
@@ -838,12 +961,12 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
         trend_rows.append(
             {
                 "Metric": label,
-                "Season": _fmt_rate(season_val),
-                "Last 5": _fmt_rate(l5_val),
-                "Δ vs Season (5)": _fmt_rate(delta5) if delta5 is not None else "—",
+                "Season": _fmt_metric_for_table(key, season_val),
+                "Last 5": _fmt_metric_for_table(key, l5_val),
+                "Δ vs Season (5)": _fmt_metric_for_table(key, delta5) if delta5 is not None else "—",
                 "Trend (5)": "—" if delta5 is None else _trend_arrow(delta5, inverse_better=inverse),
-                "Last 10": _fmt_rate(l10_val),
-                "Δ vs Season (10)": _fmt_rate(delta10) if delta10 is not None else "—",
+                "Last 10": _fmt_metric_for_table(key, l10_val),
+                "Δ vs Season (10)": _fmt_metric_for_table(key, delta10) if delta10 is not None else "—",
                 "Trend (10)": "—" if delta10 is None else _trend_arrow(delta10, inverse_better=inverse),
             }
         )
@@ -961,7 +1084,11 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
     )
 
     if not recs:
-        st.info("No trigger thresholds were exceeded in this scope. Keep monitoring trend and consistency cards.")
+        _render_empty_state(
+            "No recommendation triggers were exceeded for this filter scope.",
+            "Try changing season or player filters to compare a different sample.",
+            "empty_development_reset",
+        )
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
@@ -971,10 +1098,17 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
         header = f"{idx}. {rec.title} ({rec.priority} • {rec.category})"
         plan_lines.append(header)
         plan_lines.append(f"Why: {rec.why_this_triggered}")
-        with st.expander(header, expanded=(idx == 1)):
-            st.write(f"**Why this triggered:** {rec.why_this_triggered}")
-            st.write(f"**Priority:** {rec.priority}  |  **Category:** {rec.category}")
-            st.write("**Recommended drills:**")
+        time_estimate = f"{max(1, len(rec.drills)) * 10} min total"
+        drill_names = ", ".join([drill.name for drill in rec.drills]) if rec.drills else "No drills listed"
+        cues = "; ".join([drill.coaching_cues for drill in rec.drills]) if rec.drills else "No cues listed"
+        st.markdown('<div class="sf-card sf-plan-card">', unsafe_allow_html=True)
+        st.markdown(f"**Trigger:** {rec.title}")
+        st.markdown(f"**Why:** {rec.why_this_triggered}")
+        st.markdown(f"**Priority:** {rec.priority}  |  **Category:** {rec.category}")
+        st.markdown(f"**Time estimate:** {time_estimate}")
+        st.markdown(f"**Drills:** {drill_names}")
+        st.markdown(f"**Coaching cues:** {cues}")
+        with st.expander("View drill details", expanded=(idx == 1)):
             for drill in rec.drills:
                 st.markdown(
                     f"- **{drill.name}**  \n"
@@ -985,6 +1119,7 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
                 )
                 plan_lines.append(f"  - {drill.name}: {drill.reps_sets}")
                 _render_drill_library_matches(drill.name, category=rec.category, max_items=1)
+        st.markdown("</div>", unsafe_allow_html=True)
         coach_summary.append(f"{rec.title}: {rec.why_this_triggered}")
         plan_lines.append("")
 
@@ -1015,7 +1150,11 @@ def _render_games(ctx: dict[str, Any]) -> None:
 
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False]).copy()
     if games_sorted.empty:
-        st.info(HELP_TEXT["games_empty"])
+        _render_empty_state(
+            HELP_TEXT["games_empty"],
+            "Use Reset Filters to return to a broader game selection.",
+            "empty_games_reset",
+        )
         return
     show = games_sorted.rename(
         columns={
@@ -1052,7 +1191,11 @@ def _render_practice(practice_df: pd.DataFrame) -> None:
     st.caption("Practice history view for coaching review. Session edits remain desktop-only.")
 
     if practice_df.empty:
-        st.info(HELP_TEXT["practice_empty"])
+        _render_empty_state(
+            HELP_TEXT["practice_empty"],
+            "Try a different season filter or reset filters to view available practice sessions.",
+            "empty_practice_reset",
+        )
     else:
         practice_sorted = practice_df.sort_values(["season_label", "session_no"], ascending=[False, False]).copy()
         practice_view = practice_sorted.rename(
@@ -1070,8 +1213,8 @@ def _render_practice(practice_df: pd.DataFrame) -> None:
         pop_avg = float(practice_sorted["pop_time"].astype(float).mean())
         c1, c2, c3 = st.columns([1, 1, 1], gap="small")
         c1.metric("Sessions", count)
-        c2.metric("Avg Transfer", _fmt_float(transfer_avg))
-        c3.metric("Avg Pop", _fmt_float(pop_avg))
+        c2.metric("Avg Transfer", _fmt_seconds(transfer_avg, 2))
+        c3.metric("Avg Pop", _fmt_seconds(pop_avg, 2))
 
     st.markdown('<div class="sf-card">', unsafe_allow_html=True)
     st.markdown('<div class="sf-card-title">Drill Library</div>', unsafe_allow_html=True)
@@ -1103,13 +1246,24 @@ def _render_trends(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
 
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[True, True])
     if games_sorted.empty:
-        st.info(HELP_TEXT["trends_empty"])
+        _render_empty_state(
+            HELP_TEXT["trends_empty"],
+            "Trends require games in scope. Reset or widen filters to continue.",
+            "empty_trends_reset",
+        )
         return
 
     metric = st.selectbox(
         "Metric",
         options=["ops", "avg", "obp", "slg", "k_rate", "bb_rate", "cs_pct", "pb_rate", "transfer", "pop"],
         format_func=lambda x: METRIC_LABELS.get(x, x.replace("_", " ").title()),
+        help=(
+            f"OPS: {METRIC_HELP['ops']} | "
+            f"K-rate: {METRIC_HELP['k_rate']} | "
+            f"CS%: {METRIC_HELP['cs_pct']} | "
+            f"Exchange: {METRIC_HELP['exchange']} | "
+            f"Pop time: {METRIC_HELP['pop_time']}"
+        ),
     )
 
     season_rows: list[dict[str, Any]] = []
@@ -1179,7 +1333,11 @@ def _render_pop_time(practice_df: pd.DataFrame) -> None:
     st.caption("Pop-time review snapshot. Frame marking and video workflows run in desktop.")
 
     if practice_df.empty:
-        st.info("No pop-time rows in the selected demo scope.")
+        _render_empty_state(
+            "No pop-time rows are available for this selection.",
+            "Select a season with catching sessions or reset filters.",
+            "empty_pop_reset",
+        )
         return
 
     practice_sorted = practice_df.sort_values(["season_label", "session_no"], ascending=[False, False])
@@ -1195,9 +1353,9 @@ def _render_pop_time(practice_df: pd.DataFrame) -> None:
     )
 
     c1, c2, c3 = st.columns([1, 1, 1], gap="small")
-    c1.metric("Transfer", _fmt_float(float(calc["transfer"])))
-    c2.metric("Throw", _fmt_float(float(calc["throw_time"] or 0.0)))
-    c3.metric("Total Pop", _fmt_float(float(calc["pop_total"])))
+    c1.metric("Transfer", _fmt_seconds(float(calc["transfer"]), 2))
+    c2.metric("Throw", _fmt_seconds(float(calc["throw_time"] or 0.0), 2))
+    c3.metric("Total Pop", _fmt_seconds(float(calc["pop_total"]), 2))
 
     st.markdown('<div class="sf-card">', unsafe_allow_html=True)
     st.markdown('<div class="sf-card-title">Rep Set Snapshot</div>', unsafe_allow_html=True)
@@ -1224,7 +1382,11 @@ def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
     st.subheader("Export")
     st.caption("Read-only export for the current filtered view.")
     if ctx["scoped_games"].empty and practice_df.empty and summaries_df.empty:
-        st.info("No filtered rows found. The export will include filter metadata only.")
+        _render_empty_state(
+            "No filtered rows found. Export will contain metadata only.",
+            "Use reset filters to include game and practice rows in export.",
+            "empty_export_reset",
+        )
     csv_blob = _build_export_csv(ctx, ctx["scoped_games"], practice_df, summaries_df)
     st.download_button(
         label="Export current view to CSV",

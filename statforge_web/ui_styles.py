@@ -85,6 +85,14 @@ def get_app_css() -> str:
         gap: 12px;
     }
 
+    .sf-badge-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
     .sf-brand {
         line-height: 1.1;
     }
@@ -98,13 +106,23 @@ def get_app_css() -> str:
 
     .sf-subtitle {
         color: #96A7B7;
-        font-size: 0.84rem;
+        font-size: 0.76rem;
+        margin-top: 2px;
     }
 
     .sf-tagline {
-        color: #D9E5F0;
-        font-size: 0.86rem;
-        margin-top: 3px;
+        color: #EAF4FC;
+        font-size: 1.02rem;
+        font-weight: 700;
+        margin-top: 4px;
+        letter-spacing: 0.01em;
+    }
+
+    .sf-tagline-secondary {
+        color: #BFD1E1;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-top: 4px;
     }
 
     .sf-badge {
@@ -243,6 +261,10 @@ def get_app_css() -> str:
         border: 1px solid #D0DCE8;
     }
 
+    .sf-plan-card {
+        border-left: 4px solid #2EA3FF;
+    }
+
     .sf-disclaimer {
         color: #7C8A98;
         font-size: 0.74rem;
@@ -338,6 +360,10 @@ def get_app_css() -> str:
         .sf-header-top {
             align-items: flex-start;
             flex-direction: column;
+        }
+
+        .sf-badge-row {
+            justify-content: flex-start;
         }
 
         .sf-badge {
