@@ -36,6 +36,16 @@ python app.py
 
 On first run, a local SQLite database file (`statforge.db`) is created automatically in the project root.
 
+## Quick Smoke Test
+- Desktop (full app with local storage):
+  ```bash
+  python app.py
+  ```
+- Web demo (read-only showroom):
+  ```bash
+  streamlit run statforge_web/app.py
+  ```
+
 ## Features (V1)
 - Create and edit players
 - Select active player

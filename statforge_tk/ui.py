@@ -36,6 +36,7 @@ from .metrics import (
 )
 from .training_panel import TrainingSuggestionPanel
 from .season_summary import compute_season_summary_metrics, parse_season_summary
+from statforge_core.brand import APP_NAME, DISCLAIMER, TAGLINE, VERSION
 from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.suggestions import get_suggestions
 
@@ -65,7 +66,7 @@ class StatForgeApp:
         self.root = root
         self.db = db
 
-        self.root.title("StatForge by Anchor & Honor")
+        self.root.title(f"{APP_NAME} by Anchor & Honor")
         self.root.geometry("980x700")
 
         self.active_player_id: int | None = None
@@ -184,6 +185,14 @@ class StatForgeApp:
         self._build_dashboard_tab()
         self._build_trends_tab()
 
+        footer = ttk.Frame(self.root, style="Header.TFrame")
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Label(
+            footer,
+            text=DISCLAIMER,
+            style="HeaderSubtitle.TLabel",
+        ).pack(anchor="center", pady=(4, 6))
+
     def _build_header(self) -> None:
         header = tk.Frame(self.root, bg=Theme.NAVY, height=84)
         header.pack(fill=tk.X, side=tk.TOP)
@@ -223,6 +232,16 @@ class StatForgeApp:
             text="by Anchor & Honor",
             style="HeaderSubtitle.TLabel",
         ).grid(row=1, column=0, pady=(2, 0))
+        ttk.Label(
+            brand_frame,
+            text=TAGLINE,
+            style="HeaderSubtitle.TLabel",
+        ).grid(row=2, column=0, pady=(2, 0))
+        ttk.Label(
+            brand_frame,
+            text=VERSION,
+            style="HeaderSubtitle.TLabel",
+        ).grid(row=3, column=0, pady=(1, 0))
 
         right_spacer = ttk.Frame(header, style="Header.TFrame")
         right_spacer.grid(row=0, column=2, sticky="nsew")
@@ -1182,7 +1201,7 @@ class StatForgeApp:
 
         recent_notes_frame = ttk.LabelFrame(
             self.dashboard_content,
-            text="Recent Notes",
+            text="Coach Notes",
             padding=10,
             style="Card.TLabelframe",
         )
@@ -1303,7 +1322,7 @@ class StatForgeApp:
 
         shared_suggestions_frame = ttk.LabelFrame(
             self.dashboard_content,
-            text="Suggested Development Focus (Shared Engine)",
+            text="Suggested Development Focus",
             padding=10,
             style="Card.TLabelframe",
         )
@@ -1323,6 +1342,28 @@ class StatForgeApp:
         actions.pack(anchor="w", pady=8)
         ttk.Button(actions, text="Refresh Dashboard", command=self.refresh_dashboard).pack(side=tk.LEFT)
         ttk.Button(actions, text="Export Report (PDF)", command=self.export_report_pdf).pack(side=tk.LEFT, padx=(8, 0))
+
+        # Section parity with web: Overview -> Trends -> Suggested Development Focus -> Coach Notes -> Export actions
+        desired_order = [
+            totals_frame,
+            baseline_frame,
+            trends_frame,
+            perf_frame,
+            shared_suggestions_frame,
+            recent_notes_frame,
+            actions,
+            practice_week_frame,
+            development_frame,
+            consistency_frame,
+            current_focus_frame,
+            focus_frame,
+        ]
+        for widget in desired_order:
+            widget.pack_forget()
+            if widget is actions:
+                widget.pack(anchor="w", pady=8)
+            else:
+                widget.pack(fill=tk.X, pady=6)
 
     def _build_season_summary_tab(self) -> None:
         form = ttk.LabelFrame(self.season_summary_content, text="Import Season Summary", padding=10, style="Card.TLabelframe")

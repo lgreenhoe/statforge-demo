@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover - fallback when altair is unavailable
     alt = None  # type: ignore[assignment]
 
 from statforge_core.consistency import compute_consistency
+from statforge_core.brand import APP_NAME, DISCLAIMER, TAGLINE
 from statforge_core.metrics import compute_catching_metrics, compute_hitting_metrics
 from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.recommendations import generate_recommendations
@@ -30,7 +31,7 @@ from statforge_core.suggestions import get_suggestions
 from statforge_web.demo_data_loader import compute_or_map_metrics, load_demo_dataset
 from statforge_web.drill_library import DRILL_LIBRARY, filter_drill_library, match_library_drills
 from statforge_web.drills import build_training_suggestions
-from statforge_web.ui_constants import APP_SIGNATURE, APP_SUBTITLE, APP_TITLE, HELP_TEXT, METRIC_HELP, SECTION_GAP_MD
+from statforge_web.ui_constants import APP_SIGNATURE, HELP_TEXT, METRIC_HELP, SECTION_GAP_MD
 from statforge_web.ui_styles import get_app_css
 
 DATA_DIR = Path(__file__).resolve().parent / "demo_data"
@@ -699,8 +700,8 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
     st.markdown(
         (
             '<div class="sf-header"><div class="sf-header-top">'
-            f'<div class="sf-brand"><div class="sf-wordmark">{APP_TITLE}</div>'
-            f'<div class="sf-tagline">{APP_SUBTITLE}</div>'
+            f'<div class="sf-brand"><div class="sf-wordmark">{APP_NAME}</div>'
+            f'<div class="sf-tagline">{TAGLINE}</div>'
             '<div class="sf-tagline-secondary">Demo • Read-only • Anonymized</div>'
             f'<div class="sf-subtitle">{APP_SIGNATURE}</div></div>'
             '<div class="sf-badge-row">'
@@ -1770,7 +1771,7 @@ def _render_selected_section(
 
 
 def main() -> None:
-    st.set_page_config(page_title=f"{APP_TITLE} Web Demo", layout="wide")
+    st.set_page_config(page_title=f"{APP_NAME} Web Demo", layout="wide")
     _inject_noindex()
     _inject_styles()
 
@@ -1836,7 +1837,7 @@ def main() -> None:
             _render_selected_section(section, ctx, scoped_practice, scoped_summaries)
 
     st.markdown(
-        '<div class="sf-disclaimer">Decision-support tool. No guarantee of results. Not affiliated with any league.</div>',
+        f'<div class="sf-disclaimer">{DISCLAIMER}</div>',
         unsafe_allow_html=True,
     )
     st.markdown(

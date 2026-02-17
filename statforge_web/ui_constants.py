@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-APP_TITLE = "StatForge"
-APP_SUBTITLE = "Turning Stats into Player Development"
+from statforge_core.brand import APP_NAME, DISCLAIMER, TAGLINE
+
+APP_TITLE = APP_NAME
+APP_SUBTITLE = TAGLINE
 APP_SIGNATURE = "by Anchor & Honor"
+APP_DISCLAIMER = DISCLAIMER
 
 SECTION_GAP_MD = '<div style="margin-top:0.45rem;"></div>'
 
