@@ -8,3 +8,15 @@ __pycache__/
 .streamlit/secrets.toml
 **/.streamlit/secrets.toml
 .DS_Store
+statforge_tk/
+statforge_desktop/
+statforge/
+styles/
+reports/
+coaching/
+video/
+assets/
+dist/
+build/
+app.py
+StatForge.command

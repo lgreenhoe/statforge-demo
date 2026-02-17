@@ -1,1 +1,0 @@
-"""Styling package for StatForge."""

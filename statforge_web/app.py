@@ -736,6 +736,28 @@ def _render_viewing_context(ctx: dict[str, Any]) -> None:
     )
 
 
+def _render_desktop_comparison_panel() -> None:
+    st.markdown("### What you get in Desktop Edition")
+    left, right = st.columns(2, gap="medium")
+    with left:
+        st.markdown("**Web Demo (Read-only)**")
+        st.markdown(
+            "- Explore the workflow with sample data  \n"
+            "- View dashboards, trends, and suggested development focus  \n"
+            "- Draft mode: changes are not saved  \n"
+            "- No real player uploads or cloud storage"
+        )
+    with right:
+        st.markdown("**Desktop Edition (Full App)**")
+        st.markdown(
+            "- Full roster/team management (create/edit/save)  \n"
+            "- Import/export CSV for real teams  \n"
+            "- Position-aware video analysis (multiple protocols)  \n"
+            "- Local data storage (offline, no cloud required)  \n"
+            "- Printable reports and exports"
+        )
+
+
 def _build_coach_summary_text(ctx: dict[str, Any], scoped_games: pd.DataFrame, scoped_practice: pd.DataFrame) -> str:
     season_metrics = _window_metrics(scoped_games)
     metric_pack = _build_recommendation_metrics(scoped_games, scoped_practice)
@@ -1883,6 +1905,7 @@ def main() -> None:
     _render_sidebar_export(ctx, scoped_games, scoped_practice, scoped_summaries)
 
     _render_top_header(ctx)
+    _render_desktop_comparison_panel()
     _render_viewing_context(ctx)
     _render_header_actions(ctx, scoped_games, scoped_practice)
 
