@@ -37,6 +37,7 @@ from .metrics import (
 from .training_panel import TrainingSuggestionPanel
 from .season_summary import compute_season_summary_metrics, parse_season_summary
 from statforge_core.pop_time import calculate_pop_metrics
+from statforge_core.suggestions import get_suggestions
 
 try:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -1292,6 +1293,24 @@ class StatForgeApp:
         self.focus_text = tk.Text(focus_frame, height=11, width=110)
         self.focus_text.pack(fill=tk.X)
         self.focus_text.configure(
+            bg=Theme.CARD_BG,
+            fg=Theme.TEXT,
+            bd=0,
+            highlightthickness=0,
+            insertbackground=Theme.TEXT,
+            state=tk.DISABLED,
+        )
+
+        shared_suggestions_frame = ttk.LabelFrame(
+            self.dashboard_content,
+            text="Suggested Development Focus (Shared Engine)",
+            padding=10,
+            style="Card.TLabelframe",
+        )
+        shared_suggestions_frame.pack(fill=tk.X, pady=6)
+        self.shared_suggestions_text = tk.Text(shared_suggestions_frame, height=8, width=110)
+        self.shared_suggestions_text.pack(fill=tk.X)
+        self.shared_suggestions_text.configure(
             bg=Theme.CARD_BG,
             fg=Theme.TEXT,
             bd=0,
@@ -3436,6 +3455,12 @@ class StatForgeApp:
         self.focus_text.insert(tk.END, text)
         self.focus_text.configure(state=tk.DISABLED)
 
+    def _set_shared_suggestions_text(self, text: str) -> None:
+        self.shared_suggestions_text.configure(state=tk.NORMAL)
+        self.shared_suggestions_text.delete("1.0", tk.END)
+        self.shared_suggestions_text.insert(tk.END, text)
+        self.shared_suggestions_text.configure(state=tk.DISABLED)
+
     def _set_practice_week_text(self, text: str) -> None:
         self.practice_week_text.configure(state=tk.NORMAL)
         self.practice_week_text.delete("1.0", tk.END)
@@ -4078,6 +4103,7 @@ class StatForgeApp:
             self._set_current_focus_text("No player selected.")
             self.current_focus_stat_training_key = None
             self._set_focus_text("No player selected.")
+            self._set_shared_suggestions_text("No player selected.")
             for var in self.trends_vars.values():
                 var.set(var.get().split(":")[0] + ": —")
             self._refresh_performance_trends(season=None)
@@ -4205,4 +4231,22 @@ class StatForgeApp:
         self._refresh_development_profile()
         self._refresh_consistency(season=season, start_date=start_date, end_date=end_date)
         self._refresh_focus_suggestions(season=season, start_date=start_date, end_date=end_date)
+        shared_suggestions = get_suggestions(
+            {
+                "ops": hitting.get("OPS"),
+                "k_rate": season_window.get("K_RATE"),
+                "cs_pct": catching.get("CS%"),
+                "pb_rate": catching.get("PB Rate"),
+                "pop_time": pop_avg,
+                "exchange": None,
+            }
+        )
+        lines = []
+        for idx, s in enumerate(shared_suggestions, start=1):
+            lines.append(f"{idx}. {s['title']}")
+            lines.append(f"   Why: {s['why']}")
+            for drill in s.get("drills", [])[:2]:
+                lines.append(f"   - {drill}")
+            lines.append("")
+        self._set_shared_suggestions_text("\n".join(lines).strip())
         self.refresh_trends_chart()

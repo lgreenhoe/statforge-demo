@@ -26,6 +26,7 @@ from statforge_core.metrics import compute_catching_metrics, compute_hitting_met
 from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.recommendations import generate_recommendations
 from statforge_core.season_summary import compute_season_summary_metrics
+from statforge_core.suggestions import get_suggestions
 from statforge_web.demo_data_loader import compute_or_map_metrics, load_demo_dataset
 from statforge_web.drill_library import DRILL_LIBRARY, filter_drill_library, match_library_drills
 from statforge_web.drills import build_training_suggestions
@@ -911,6 +912,27 @@ def _render_dashboard_coach_summary(metric_pack: dict[str, float | None]) -> Non
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _render_suggested_development_focus(metric_pack: dict[str, float | None], season_metrics: dict[str, float | None]) -> None:
+    stats = {
+        "ops": season_metrics.get("ops"),
+        "k_rate": season_metrics.get("k_rate"),
+        "cs_pct": season_metrics.get("cs_pct"),
+        "pb_rate": season_metrics.get("pb_rate"),
+        "pop_time": metric_pack.get("pop_time_avg"),
+        "exchange": metric_pack.get("transfer_avg"),
+    }
+    suggestions = get_suggestions(stats)
+    st.markdown('<div class="sf-card">', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Suggested Development Focus</div>', unsafe_allow_html=True)
+    st.caption("Shared rule engine from statforge_core (baseball-first, deterministic).")
+    for idx, item in enumerate(suggestions, start=1):
+        st.markdown(f"**{idx}. {item['title']}**")
+        st.markdown(f"- Why: {item['why']}")
+        for drill in item.get("drills", [])[:3]:
+            st.markdown(f"- Drill: {drill}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def _render_executive_summary(metric_pack: dict[str, float | None]) -> None:
     good_signals: list[str] = []
     needs_work: list[str] = []
@@ -1095,6 +1117,7 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
 
     _render_executive_summary(metric_pack)
     _render_dashboard_coach_summary(metric_pack)
+    _render_suggested_development_focus(metric_pack, season_metrics)
     _render_key_metric_help_row(season_metrics, metric_pack)
     _render_kpi_cards(season_metrics, last5_metrics, last10_metrics, practice_df)
     if not st.session_state.get(COACH_MODE_KEY, False):
@@ -1574,6 +1597,23 @@ def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
         )
     st.caption("Includes filter context plus in-scope games, practice, and summary rows.")
 
+    sample_report = (
+        f"StatForge Demo Sample Report\n"
+        f"Player: {ctx['player']['player_name']}\n"
+        f"Team: {ctx.get('team', 'All Teams')}\n"
+        f"Season: {ctx['season']}\n"
+        f"Game Filter: {ctx['selected_game_label']}\n"
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"\nDemo / Draft Mode: changes are not saved.\n"
+    )
+    st.download_button(
+        label="Download Sample Report (TXT)",
+        data=sample_report,
+        file_name="statforge_sample_report.txt",
+        mime="text/plain",
+        help="In-memory demo download only. No file is written by the app.",
+    )
+
 
 def _render_quick_entry(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
     st.subheader("Quick Entry")
@@ -1796,7 +1836,7 @@ def main() -> None:
             _render_selected_section(section, ctx, scoped_practice, scoped_summaries)
 
     st.markdown(
-        '<div class="sf-disclaimer">Decision support tool. Not a replacement for coaching judgment.</div>',
+        '<div class="sf-disclaimer">Decision-support tool. No guarantee of results. Not affiliated with any league.</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
