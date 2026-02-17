@@ -43,7 +43,7 @@ NAV_SCREENS = [
     "Practice",
     "Season Summary",
     "Team Dashboard",
-    "Video Analysis",
+    "Video Review",
     "Dashboard",
     "Trends",
 ]
@@ -54,11 +54,20 @@ NAV_ICONS = {
     "Practice": "🏋️",
     "Season Summary": "🧾",
     "Team Dashboard": "📋",
-    "Video Analysis": "🎬",
+    "Video Review": "🎬",
     "Dashboard": "📊",
     "Trends": "📈",
 }
-WEB_SECTIONS = ["Dashboard", "Quick Entry", "Development Plan ⭐", "Games", "Practice", "Trends", "Pop Time", "Export"]
+WEB_SECTIONS = [
+    "Dashboard",
+    "Quick Entry",
+    "Training Focus Recommendations",
+    "Games",
+    "Practice",
+    "Trends",
+    "Video Review",
+    "Reports",
+]
 METRIC_LABELS = {
     "avg": "AVG",
     "obp": "OBP",
@@ -78,6 +87,8 @@ NAV_FILTER_KEY = "sidebar_nav"
 RESET_FILTERS_KEY = "sidebar_reset_filters"
 COACH_NOTES_KEY = "coach_notes"
 COACH_MODE_KEY = "coach_mode"
+POSITION_FILTER_KEY = "sidebar_position"
+DEMO_POSITION_OPTIONS = ["Catcher", "Pitcher", "Infield", "Outfield", "Utility"]
 
 
 def _env_flag(name: str, default: bool = True) -> bool:
@@ -270,6 +281,7 @@ def _reset_filters_state() -> None:
         SEASON_FILTER_KEY,
         GAME_FILTER_KEY,
         NAV_FILTER_KEY,
+        POSITION_FILTER_KEY,
         COACH_NOTES_KEY,
         "trend_inseason_season",
         "drill_category_filter",
@@ -490,6 +502,7 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
     st.sidebar.caption(
         f"Team: {ctx.get('team', 'All Teams')}\n"
         f"Player: {ctx['player']['player_name']}\n"
+        f"Position: {ctx.get('position', 'Utility')}\n"
         f"Season: {ctx['season']}\n"
         f"Game: {ctx['selected_game_label']}\n"
         f"Date Range: {date_txt}\n"
@@ -502,6 +515,10 @@ def _render_sidebar_filters_summary(ctx: dict[str, Any], games_df: pd.DataFrame)
         st.session_state[SEASON_FILTER_KEY] = "All"
         st.session_state[GAME_FILTER_KEY] = "All"
         st.session_state[NAV_FILTER_KEY] = str(ctx.get("default_nav", "📊 Dashboard"))
+        st.session_state[POSITION_FILTER_KEY] = str(ctx.get("position", "Utility"))
+        st.rerun()
+    if st.sidebar.button("Demo Reset", key="sidebar_demo_reset", use_container_width=True):
+        _reset_filters_state()
         st.rerun()
 
 
@@ -509,6 +526,7 @@ def _render_share_view(ctx: dict[str, Any]) -> None:
     params = {
         "team": str(ctx.get("team", "All Teams")),
         "player": str(ctx["player"]["player_name"]),
+        "position": str(ctx.get("position", "Utility")),
         "season": str(ctx["season"]),
         "game": str(ctx["selected_game_label"]),
         "section": str(ctx["section"]),
@@ -518,7 +536,7 @@ def _render_share_view(ctx: dict[str, Any]) -> None:
     st.sidebar.caption("Copy this query string and append it to the app URL:")
     st.sidebar.code(f"?{query_string}", language="text")
     st.sidebar.caption(
-        f"Current filters: {ctx.get('team', 'All Teams')} | {ctx['player']['player_name']} | {ctx['season']} | {ctx['selected_game_label']}"
+        f"Current filters: {ctx.get('team', 'All Teams')} | {ctx['player']['player_name']} | {ctx.get('position', 'Utility')} | {ctx['season']} | {ctx['selected_game_label']}"
     )
     if st.sidebar.button("Apply filters to URL", use_container_width=True):
         if not safe_save("apply"):
@@ -543,7 +561,7 @@ def _render_sidebar_export(ctx: dict[str, Any], games_df: pd.DataFrame, practice
     )
     st.sidebar.caption("Draft only — resets if page reloads")
     ctx["coach_notes"] = str(st.session_state.get(COACH_NOTES_KEY, "")).strip()
-    st.sidebar.markdown("#### Export")
+    st.sidebar.markdown("#### Reports")
     if DEMO_MODE:
         if st.sidebar.button("Export current view to CSV", use_container_width=True, key="sidebar_export_blocked"):
             safe_export("export")
@@ -598,6 +616,15 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
     player_name = st.sidebar.selectbox("Player", options=player_options, key=PLAYER_FILTER_KEY)
     player_row = team_players.loc[team_players["player_name"] == player_name].iloc[0]
     player_id = int(player_row["player_id"])
+    detected_position = normalize_position(str(player_row.get("position", "Catcher")))
+    default_position = detected_position if detected_position in DEMO_POSITION_OPTIONS else "Utility"
+    _safe_default_from_query(POSITION_FILTER_KEY, DEMO_POSITION_OPTIONS, default_position, query_name="position")
+    selected_position = st.sidebar.selectbox(
+        "Player Position",
+        options=DEMO_POSITION_OPTIONS,
+        key=POSITION_FILTER_KEY,
+        help="Sets the checklist and workflow options shown in Video Review.",
+    )
 
     player_games = games.loc[games["player_id"] == player_id].copy()
     seasons = sorted(player_games["season_label"].dropna().astype(str).unique().tolist())
@@ -666,7 +693,7 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         "Practice": "Practice",
         "Season Summary": "Dashboard",
         "Team Dashboard": "Trends",
-        "Video Analysis": "Pop Time",
+        "Video Review": "Video Review",
         "Dashboard": "Dashboard",
         "Trends": "Trends",
     }
@@ -689,6 +716,7 @@ def _build_sidebar(players: pd.DataFrame, games: pd.DataFrame) -> dict[str, Any]
         "default_player": default_player,
         "default_team": default_team,
         "default_nav": default_nav,
+        "position": selected_position,
     }
 
 
@@ -703,7 +731,7 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
             '<div class="sf-header"><div class="sf-header-top">'
             f'<div class="sf-brand"><div class="sf-wordmark">{APP_NAME}</div>'
             f'<div class="sf-tagline">{TAGLINE}</div>'
-            '<div class="sf-tagline-secondary">Demo • Read-only • Anonymized</div>'
+            '<div class="sf-tagline-secondary">WEB DEMO • READ-ONLY • DRAFT MODE</div>'
             f'<div class="sf-subtitle">{APP_SIGNATURE}</div></div>'
             '<div class="sf-badge-row">'
             '<span class="sf-badge">Demo</span>'
@@ -728,34 +756,41 @@ def _render_top_header(ctx: dict[str, Any]) -> None:
         ),
         unsafe_allow_html=True,
     )
+    with st.container(border=True):
+        st.markdown("**What you're seeing**")
+        st.caption(
+            "This is an anonymized, read-only demo dataset. Changes are temporary in Draft Mode and are not saved."
+            " No real player uploads or cloud storage are enabled in this web demo."
+        )
 
 
 def _render_viewing_context(ctx: dict[str, Any]) -> None:
     st.caption(
-        f"Viewing: {ctx['player']['player_name']} | Season: {ctx['season']} | Game: {ctx['selected_game_label']}"
+        f"Viewing: {ctx['player']['player_name']} | Position: {ctx.get('position', 'Utility')} | Season: {ctx['season']} | Game: {ctx['selected_game_label']}"
     )
 
 
 def _render_desktop_comparison_panel() -> None:
-    st.markdown("### What you get in Desktop Edition")
-    left, right = st.columns(2, gap="medium")
-    with left:
-        st.markdown("**Web Demo (Read-only)**")
-        st.markdown(
-            "- Explore the workflow with sample data  \n"
-            "- View dashboards, trends, and suggested development focus  \n"
-            "- Draft mode: changes are not saved  \n"
-            "- No real player uploads or cloud storage"
-        )
-    with right:
-        st.markdown("**Desktop Edition (Full App)**")
-        st.markdown(
-            "- Full roster/team management (create/edit/save)  \n"
-            "- Import/export CSV for real teams  \n"
-            "- Position-aware video analysis (multiple protocols)  \n"
-            "- Local data storage (offline, no cloud required)  \n"
-            "- Printable reports and exports"
-        )
+    with st.container(border=True):
+        st.markdown("### What you get in Desktop Edition")
+        left, right = st.columns(2, gap="medium")
+        with left:
+            st.markdown("**Web Demo (Read-only)**")
+            st.markdown(
+                "- Explore workflow with sample data  \n"
+                "- View dashboards, trends, and training focus recommendations  \n"
+                "- Draft mode: changes are not saved  \n"
+                "- No real player uploads or cloud storage"
+            )
+        with right:
+            st.markdown("**Desktop Edition (Full App)**")
+            st.markdown(
+                "- Create/edit/save teams, games, and players locally  \n"
+                "- CSV import/export for real teams  \n"
+                "- Position-aware video analysis protocols  \n"
+                "- Offline local storage (no internet required)  \n"
+                "- Printable reports/exports"
+            )
 
 
 def _build_coach_summary_text(ctx: dict[str, Any], scoped_games: pd.DataFrame, scoped_practice: pd.DataFrame) -> str:
@@ -892,9 +927,42 @@ def _render_kpi_cards(
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+def _recommendation_logic_lines(title: str, metric_pack: dict[str, float | None]) -> list[str]:
+    title_lower = title.lower()
+    lines: list[str] = []
+    if "plate discipline" in title_lower or "obp" in title_lower:
+        lines.append(
+            f"OBP trend over last 5 vs season: {_fmt_signed(metric_pack.get('ops_delta_last5_vs_season'))}."
+        )
+        lines.append(
+            f"K-rate trend over last 5 vs season: {_fmt_signed(metric_pack.get('k_rate_delta_last5_vs_season'))}."
+        )
+    if "blocking" in title_lower or "receiving" in title_lower:
+        pb_delta = None
+        if metric_pack.get("pb_rate_last5") is not None and metric_pack.get("pb_rate_season") is not None:
+            pb_delta = float(metric_pack.get("pb_rate_last5") or 0.0) - float(metric_pack.get("pb_rate_season") or 0.0)
+        lines.append(
+            f"PB/game over last 5 vs season baseline: {_fmt_signed(pb_delta, places=3)}."
+        )
+        lines.append(f"Season PB/game baseline: {_fmt_percent(metric_pack.get('pb_rate_season'))}.")
+    if "pop" in title_lower or "exchange" in title_lower or "throw" in title_lower:
+        lines.append(
+            f"Pop time delta (last 5 vs season): {_fmt_signed(metric_pack.get('pop_delta_last5_vs_season'))}s."
+        )
+        lines.append(
+            f"Exchange delta (last 5 vs season): {_fmt_signed(metric_pack.get('transfer_delta_last5_vs_season'))}s."
+        )
+    if not lines:
+        lines.append(f"OPS movement (last 5 vs season): {_fmt_signed(metric_pack.get('ops_delta_last5_vs_season'))}.")
+        lines.append(
+            f"K-rate movement (last 5 vs season): {_fmt_signed(metric_pack.get('k_rate_delta_last5_vs_season'))}."
+        )
+    return lines[:2]
+
+
 def _render_training_suggestions(metric_pack: dict[str, float | None]) -> None:
     st.markdown('<div class="sf-card">', unsafe_allow_html=True)
-    st.markdown('<div class="sf-card-title">Training Suggestions</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Training Focus Recommendations</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="sf-card-subtitle">Deterministic mapping from stat flags to weekly drill plans.</div>',
         unsafe_allow_html=True,
@@ -910,6 +978,9 @@ def _render_training_suggestions(metric_pack: dict[str, float | None]) -> None:
         for drill in item["drills"]:
             st.markdown(f"- {drill}")
             _render_drill_library_matches(drill, max_items=1)
+        with st.expander("Why?", expanded=False):
+            for logic_line in _recommendation_logic_lines(item["what_were_seeing"], metric_pack):
+                st.markdown(f"- {logic_line}")
         if idx < len(suggestions):
             st.markdown("---")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -947,11 +1018,14 @@ def _render_suggested_development_focus(metric_pack: dict[str, float | None], se
     }
     suggestions = get_suggestions(stats)
     st.markdown('<div class="sf-card">', unsafe_allow_html=True)
-    st.markdown('<div class="sf-card-title">Suggested Development Focus</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sf-card-title">Training Focus Recommendation</div>', unsafe_allow_html=True)
     st.caption("Shared rule engine from statforge_core (baseball-first, deterministic).")
     for idx, item in enumerate(suggestions, start=1):
         st.markdown(f"**{idx}. {item['title']}**")
         st.markdown(f"- Why: {item['why']}")
+        with st.expander("Why?", expanded=False):
+            for logic_line in _recommendation_logic_lines(str(item["title"]), metric_pack):
+                st.markdown(f"- {logic_line}")
         for drill in item.get("drills", [])[:3]:
             st.markdown(f"- Drill: {drill}")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1119,9 +1193,9 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
             "- **What this demo is:** A read-only StatForge sample workspace using anonymized data.\n"
             "- **How to use filters:** Choose player, season, and game context from the sidebar.\n"
             "- **Dashboard:** KPI snapshot, trend summaries, and coach-facing insights.\n"
-            "- **Development Plan:** Deterministic recommendation engine and drill matches.\n"
+            "- **Training Focus Recommendations:** Deterministic recommendation engine and drill matches.\n"
             "- **Games / Practice:** Filtered history tables and drill library browsing.\n"
-            "- **Trends / Pop Time:** Trendline visuals and catcher timing snapshots.\n"
+            "- **Trends / Video Review:** Trendline visuals and position-aware timing snapshots.\n"
             "- **Export:** Download the current filtered view as CSV."
         )
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
@@ -1283,7 +1357,7 @@ def _render_dashboard(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_
 
 
 def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
-    st.subheader("Development Plan")
+    st.subheader("Training Focus Recommendations")
     st.caption(HELP_TEXT["development_plan"])
 
     games_sorted = ctx["scoped_games"].sort_values(["season_label", "game_no"], ascending=[False, False])
@@ -1306,7 +1380,7 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    plan_lines: list[str] = [f"{ctx['player']['player_name']} Development Plan"]
+    plan_lines: list[str] = [f"{ctx['player']['player_name']} Training Focus Recommendations"]
     coach_summary: list[str] = []
     for idx, rec in enumerate(recs, start=1):
         header = f"{idx}. {rec.title} ({rec.priority} • {rec.category})"
@@ -1322,6 +1396,9 @@ def _render_development_plan(ctx: dict[str, Any], practice_df: pd.DataFrame) -> 
         st.markdown(f"**Time estimate:** {time_estimate}")
         st.markdown(f"**Drills:** {drill_names}")
         st.markdown(f"**Coaching cues:** {cues}")
+        with st.expander("Why?", expanded=False):
+            for logic_line in _recommendation_logic_lines(rec.title, metric_pack):
+                st.markdown(f"- {logic_line}")
         with st.expander("View drill details", expanded=(idx == 1 and not st.session_state.get(COACH_MODE_KEY, False))):
             for drill in rec.drills:
                 st.markdown(
@@ -1549,24 +1626,33 @@ def _render_trends(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
 
 
 def _render_pop_time(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
-    st.subheader("Video Analysis")
+    st.subheader("Video Review")
     st.caption("Position-aware, marker-based timing preview. Full frame-by-frame playback remains in desktop.")
-
-    player_position = normalize_position(str(ctx.get("player", {}).get("position", "Catcher")))
-    position_options = ["Catcher", "Pitcher", "Infield", "Outfield", "Hitter", "FirstBase"]
-    if player_position not in position_options:
-        player_position = "Catcher"
-    c_pos, c_type = st.columns([1, 2], gap="small")
-    with c_pos:
-        position = st.selectbox("Position", options=position_options, index=position_options.index(player_position))
-    protocols = list_protocols_for_position(position)
+    selected_position = str(ctx.get("position", "Utility"))
+    protocol_position = {"Utility": "Infield"}.get(selected_position, selected_position)
+    protocols = list_protocols_for_position(protocol_position)
     analysis_names = [protocol.analysis_type for protocol in protocols] or ["Catcher Pop Time"]
-    with c_type:
-        analysis_type = st.selectbox("Analysis Type", options=analysis_names)
+    analysis_type = st.selectbox("Analysis Type", options=analysis_names, help="Changes based on Player Position.")
     protocol = next((p for p in protocols if p.analysis_type == analysis_type), None)
     if protocol is None:
         st.info("No analysis protocol available for this position yet.")
         return
+    checklist_map = {
+        "Catcher": ["Pop time workflow", "Blocking", "Receiving", "Transfer/footwork"],
+        "Pitcher": ["Mechanics checkpoints", "Release consistency", "Tempo", "Command"],
+        "Infield": ["First step", "Glove-to-hand", "Exchange", "Throw accuracy"],
+        "Outfield": ["Route efficiency", "First step", "Crow hop", "Release", "Accuracy"],
+        "Utility": ["First step", "Exchange", "Release consistency", "Throw accuracy"],
+    }
+    checklist_options = checklist_map.get(selected_position, checklist_map["Utility"])
+    st.multiselect(
+        f"{selected_position} Video Review Checklist",
+        options=checklist_options,
+        default=[],
+        key=f"video_review_checklist_{selected_position}",
+        help="Session-only checklist for coach workflow; not saved.",
+    )
+    st.caption("Draft mode: checklist selections reset when the session reloads.")
 
     st.caption(f"Markers to set: {', '.join(m.title() for m in protocol.event_markers)}")
     marker_cols = st.columns(max(len(protocol.event_markers), 1), gap="small")
@@ -1600,7 +1686,7 @@ def _render_pop_time(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
             }
             suggestions = get_suggestions(player_stats)
             if suggestions:
-                st.markdown("**Suggested Development Focus**")
+                st.markdown("**Training Focus Recommendation**")
                 for item in suggestions[:2]:
                     drill_line = ", ".join(item.get("drills", [])[:2])
                     st.markdown(f"- **{item.get('title', 'Focus')}:** {item.get('why', '')}  \n  Drills: {drill_line}")
@@ -1655,7 +1741,7 @@ def _render_pop_time(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
 
 
 def _render_export(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df: pd.DataFrame) -> None:
-    st.subheader("Export")
+    st.subheader("Reports")
     st.caption("Read-only export for the current filtered view.")
     if ctx["scoped_games"].empty and practice_df.empty and summaries_df.empty:
         _render_empty_state(
@@ -1833,7 +1919,7 @@ def _render_selected_section(
 ) -> None:
     if section == "Dashboard":
         _render_dashboard(ctx, practice_df, summaries_df)
-    elif section == "Development Plan ⭐":
+    elif section == "Training Focus Recommendations":
         _render_development_plan(ctx, practice_df)
     elif section == "Games":
         _render_games(ctx)
@@ -1841,9 +1927,9 @@ def _render_selected_section(
         _render_practice(practice_df)
     elif section == "Trends":
         _render_trends(ctx, practice_df, summaries_df)
-    elif section == "Pop Time":
+    elif section == "Video Review":
         _render_pop_time(ctx, practice_df)
-    elif section == "Export":
+    elif section == "Reports":
         _render_export(ctx, practice_df, summaries_df)
     elif section == "Quick Entry":
         _render_quick_entry(ctx, practice_df)
@@ -1917,11 +2003,12 @@ def main() -> None:
             _render_selected_section(section, ctx, scoped_practice, scoped_summaries)
 
     st.markdown(
-        f'<div class="sf-disclaimer">{DISCLAIMER}</div>',
+        '<div class="sf-disclaimer">StatForge is a decision-support tool. No guarantee of results. '
+        "Not affiliated with any league or platform.</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="sf-footer">StatForge Demo • Read-only • Data is anonymized</div>',
+        '<div class="sf-footer">Demo Version • Read-only • Data is anonymized</div>',
         unsafe_allow_html=True,
     )
 

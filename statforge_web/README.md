@@ -3,11 +3,24 @@
 This is a separate web demo app that reuses shared logic from `statforge_core/`.
 
 ## Privacy / Safety
-- Uses bundled anonymized demo data only:
-  - `Demo Catcher`
-  - `Demo Player 2`
-- No team names, opponent names, jersey numbers, or real player dates.
+- Uses bundled anonymized demo data only (multiple fake teams/players).
+- Team/opponent labels are generic demo labels only.
 - No upload feature is enabled, and no user-uploaded files are stored.
+- Web demo runs in read-only draft mode; changes are not persisted.
+
+## Demo vs Desktop
+### Web Demo (Read-only)
+- Explore workflow with anonymized sample data
+- View dashboard, trends, training focus recommendations, and video review checklists
+- Draft mode only: no persistent saves
+- No real player uploads or cloud storage
+
+### Desktop Edition (Full App)
+- Create/edit/save teams, games, players locally
+- CSV import/export for real teams
+- Position-aware video analysis protocols with local workflows
+- Offline local data storage
+- Printable reports and exports
 
 ## Local Run
 ```bash
