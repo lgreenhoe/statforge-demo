@@ -89,6 +89,23 @@ class Database:
                 FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS video_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER NOT NULL,
+                analysis_date TEXT NOT NULL,
+                position TEXT NOT NULL,
+                analysis_type TEXT NOT NULL,
+                video_path TEXT DEFAULT '',
+                fps REAL,
+                start_frame INTEGER,
+                end_frame INTEGER,
+                duration_seconds REAL,
+                extra_json TEXT DEFAULT '{}',
+                notes TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS season_summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 player_id INTEGER NOT NULL,
@@ -121,8 +138,10 @@ class Database:
         self._migrate_games_add_season()
         self._migrate_games_add_notes()
         self._migrate_practice_add_video_path()
+        self._migrate_create_video_analysis()
         self._ensure_games_indexes()
         self._ensure_practice_indexes()
+        self._ensure_video_analysis_indexes()
         self._ensure_players_indexes()
         self._ensure_season_summary_indexes()
         self._ensure_timeline_indexes()
@@ -165,6 +184,28 @@ class Database:
         if "video_path" not in column_names:
             self.conn.execute("ALTER TABLE practice_sessions ADD COLUMN video_path TEXT DEFAULT ''")
 
+    def _migrate_create_video_analysis(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS video_analysis (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id INTEGER NOT NULL,
+                analysis_date TEXT NOT NULL,
+                position TEXT NOT NULL,
+                analysis_type TEXT NOT NULL,
+                video_path TEXT DEFAULT '',
+                fps REAL,
+                start_frame INTEGER,
+                end_frame INTEGER,
+                duration_seconds REAL,
+                extra_json TEXT DEFAULT '{}',
+                notes TEXT DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(player_id) REFERENCES players(id) ON DELETE CASCADE
+            )
+            """
+        )
+
     def _ensure_games_indexes(self) -> None:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_games_player_date ON games(player_id, game_date)")
         self.conn.execute(
@@ -174,6 +215,16 @@ class Database:
     def _ensure_practice_indexes(self) -> None:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_practice_player_date ON practice_sessions(player_id, session_date)"
+        )
+
+    def _ensure_video_analysis_indexes(self) -> None:
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_analysis_player_date "
+            "ON video_analysis(player_id, analysis_date DESC)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_video_analysis_type "
+            "ON video_analysis(player_id, analysis_type, analysis_date DESC)"
         )
 
     def _ensure_players_indexes(self) -> None:
@@ -453,6 +504,68 @@ class Database:
     def delete_practice_session(self, session_id: int) -> bool:
         cur = self.execute("DELETE FROM practice_sessions WHERE id = ?", (session_id,))
         return cur.rowcount > 0
+
+    def add_video_analysis(
+        self,
+        player_id: int,
+        analysis_date: str,
+        position: str,
+        analysis_type: str,
+        video_path: str = "",
+        fps: float | None = None,
+        start_frame: int | None = None,
+        end_frame: int | None = None,
+        duration_seconds: float | None = None,
+        extra: dict[str, Any] | None = None,
+        notes: str = "",
+    ) -> int:
+        cur = self.execute(
+            """
+            INSERT INTO video_analysis(
+                player_id, analysis_date, position, analysis_type, video_path, fps,
+                start_frame, end_frame, duration_seconds, extra_json, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                player_id,
+                analysis_date,
+                position,
+                analysis_type,
+                video_path or "",
+                fps,
+                start_frame,
+                end_frame,
+                duration_seconds,
+                json.dumps(extra or {}, separators=(",", ":")),
+                notes or "",
+            ),
+        )
+        return int(cur.lastrowid)
+
+    def get_recent_video_analysis(self, player_id: int, limit: int = 20) -> list[sqlite3.Row]:
+        return self.query_all(
+            """
+            SELECT
+                id,
+                analysis_date,
+                position,
+                analysis_type,
+                video_path,
+                fps,
+                start_frame,
+                end_frame,
+                duration_seconds,
+                extra_json,
+                notes,
+                created_at
+            FROM video_analysis
+            WHERE player_id = ?
+            ORDER BY analysis_date DESC, id DESC
+            LIMIT ?
+            """,
+            (player_id, limit),
+        )
 
     def get_recent_practice_sessions(self, player_id: int, limit: int = 20) -> list[sqlite3.Row]:
         return self.query_all(

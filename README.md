@@ -53,6 +53,12 @@ On first run, a local SQLite database file (`statforge.db`) is created automatic
 - Enter stat line for each game
 - Dashboard with season totals and derived metrics
 - Last-5-game trend arrows (vs previous 5) for OPS, SO rate, CS%, PB rate
+- Position-aware video analysis (manual marker MVP):
+  - Catcher: Pop Time (catch -> release -> target or estimated flight)
+  - Pitcher: Time To Plate (start -> plate)
+  - Infield/1B: Fielding Transfer (glove -> release)
+  - Outfield: Glove To Release
+  - Hitter: Load To Contact
 
 ## Streamlit Web Demo (Anonymized)
 The web demo is intentionally separate and uses anonymized data only.
@@ -82,3 +88,9 @@ streamlit run statforge_web/app.py
 - Main deterministic dataset: `statforge_web/demo_data/demo_dataset.json`
 - Validator: `python -m statforge_web.demo_data_validator`
 - Keep all demo-only data isolated under `statforge_web/` so desktop/local DB workflows remain unaffected.
+
+## Video Protocol Smoke Test
+Run a lightweight protocol check:
+```bash
+python -m statforge_core.video_protocols_smoke
+```

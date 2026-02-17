@@ -39,6 +39,12 @@ from .season_summary import compute_season_summary_metrics, parse_season_summary
 from statforge_core.brand import APP_NAME, DISCLAIMER, TAGLINE, VERSION
 from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.suggestions import get_suggestions
+from statforge_core.video_protocols import (
+    VideoProtocol,
+    compute_protocol_result,
+    list_protocols_for_position,
+    normalize_position,
+)
 
 try:
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -95,6 +101,7 @@ class StatForgeApp:
         self.video_marker_catch: float | None = None
         self.video_marker_release: float | None = None
         self.video_marker_target: float | None = None
+        self.video_marker_custom: dict[str, float] = {}
         self.video_last_transfer: float | None = None
         self.video_last_throw: float | None = None
         self.video_last_pop: float | None = None
@@ -112,6 +119,7 @@ class StatForgeApp:
         self.video_roi_by_path: dict[str, tuple[float, float, float, float]] = {}
         self.practice_video_paths: dict[int, str] = {}
         self.video_audio_cache: dict[str, Path] = {}
+        self.video_protocols_cache: list[VideoProtocol] = list(list_protocols_for_position("Catcher"))
         self.dashboard_stat_values: dict[str, float | None] = {}
         self.season_summary_parsed: dict[str, Any] = {}
         self.season_summary_unknown_lines: list[str] = []
@@ -667,9 +675,40 @@ class StatForgeApp:
         )
         self.video_btn_step_fwd.pack(fill=tk.X, pady=(0, 6))
 
+        analysis_controls = ttk.LabelFrame(right, text="Analysis Protocol", padding=8, style="Card.TLabelframe")
+        analysis_controls.pack(fill=tk.X, pady=(0, 8))
+        self.video_position_var = tk.StringVar(value="Catcher")
+        self.video_analysis_type_var = tk.StringVar(value="Catcher Pop Time")
+        ttk.Label(analysis_controls, text="Position:").grid(row=0, column=0, sticky="w")
+        self.video_position_combo = ttk.Combobox(
+            analysis_controls,
+            textvariable=self.video_position_var,
+            values=["Catcher", "Pitcher", "Infield", "Outfield", "Hitter", "FirstBase"],
+            state="readonly",
+            width=18,
+        )
+        self.video_position_combo.grid(row=0, column=1, sticky="w", padx=6)
+        self.video_position_combo.bind("<<ComboboxSelected>>", self._on_video_position_changed)
+
+        ttk.Label(analysis_controls, text="Analysis Type:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.video_analysis_combo = ttk.Combobox(
+            analysis_controls,
+            textvariable=self.video_analysis_type_var,
+            values=["Catcher Pop Time"],
+            state="readonly",
+            width=24,
+        )
+        self.video_analysis_combo.grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
+        self.video_analysis_combo.bind("<<ComboboxSelected>>", self._on_video_analysis_changed)
+
+        self.video_instruction_var = tk.StringVar(value="Markers: catch → release → target (optional).")
+        ttk.Label(analysis_controls, textvariable=self.video_instruction_var, style="Muted.TLabel").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+
         self.video_btn_mark_catch = ttk.Button(
             right,
-            text="Mark Catch",
+            text="Mark Start",
             width=24,
             command=lambda: self.mark_video_time("catch"),
             state=tk.DISABLED,
@@ -677,7 +716,7 @@ class StatForgeApp:
         self.video_btn_mark_catch.pack(fill=tk.X, pady=(0, 6))
         self.video_btn_mark_release = ttk.Button(
             right,
-            text="Mark Release",
+            text="Mark Mid",
             width=24,
             command=lambda: self.mark_video_time("release"),
             state=tk.DISABLED,
@@ -685,7 +724,7 @@ class StatForgeApp:
         self.video_btn_mark_release.pack(fill=tk.X, pady=(0, 6))
         self.video_btn_mark_target = ttk.Button(
             right,
-            text="Mark Target Catch",
+            text="Mark End",
             width=24,
             command=lambda: self.mark_video_time("target"),
             state=tk.DISABLED,
@@ -893,6 +932,7 @@ class StatForgeApp:
             state=tk.DISABLED,
         )
         self.video_btn_save_practice.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        self._sync_video_protocol_controls()
         self._apply_metric_mode_controls()
 
     def _build_practice_tab(self) -> None:
@@ -1862,6 +1902,10 @@ class StatForgeApp:
         )
         self.player_details_var.set(details)
         self.dashboard_player_var.set(f"Dashboard for {player['name']}")
+        if hasattr(self, "video_position_var"):
+            normalized_position = normalize_position(str(player["position"] or "Catcher"))
+            self.video_position_var.set(normalized_position)
+            self._sync_video_protocol_controls()
 
     def _team_id_from_form(self) -> int | None:
         label = self.player_form_vars["team"].get()
@@ -1978,6 +2022,71 @@ class StatForgeApp:
     def _format_seconds(self, value: float | None) -> str:
         return "—" if value is None else f"{value:.3f}s"
 
+    def _current_video_protocol(self) -> VideoProtocol:
+        selected = self.video_analysis_type_var.get().strip()
+        for protocol in self.video_protocols_cache:
+            if protocol.analysis_type == selected:
+                return protocol
+        protocols = list_protocols_for_position(self.video_position_var.get())
+        if not protocols:
+            protocols = list_protocols_for_position("Catcher")
+        return protocols[0]
+
+    def _current_video_marker_labels(self) -> tuple[str, str, str]:
+        protocol = self._current_video_protocol()
+        labels = list(protocol.event_markers)
+        while len(labels) < 3:
+            labels.append("n/a")
+        return labels[0], labels[1], labels[2]
+
+    def _sync_video_protocol_controls(self) -> None:
+        if not hasattr(self, "video_position_combo"):
+            return
+        position = normalize_position(self.video_position_var.get())
+        if position != self.video_position_var.get():
+            self.video_position_var.set(position)
+        protocols = list_protocols_for_position(position)
+        if not protocols:
+            protocols = list_protocols_for_position("Catcher")
+            self.video_position_var.set("Catcher")
+        self.video_protocols_cache = list(protocols)
+        names = [protocol.analysis_type for protocol in protocols]
+        self.video_analysis_combo.configure(values=names)
+        if self.video_analysis_type_var.get() not in names:
+            self.video_analysis_type_var.set(names[0])
+        protocol = self._current_video_protocol()
+        labels = list(protocol.event_markers)
+        while len(labels) < 3:
+            labels.append("n/a")
+        first, second, third = labels[0], labels[1], labels[2]
+        self.video_btn_mark_catch.configure(text=f"Mark {first.title()}")
+        self.video_btn_mark_release.configure(text=f"Mark {second.title()}")
+        if third == "n/a":
+            self.video_btn_mark_target.configure(text="Mark End")
+        else:
+            self.video_btn_mark_target.configure(text=f"Mark {third.title()}")
+        self.video_btn_calc.configure(text=f"Calculate {protocol.analysis_type}")
+        marker_line = " -> ".join(m.title() for m in protocol.event_markers)
+        self.video_instruction_var.set(f"Markers: {marker_line}. {protocol.description}")
+        catcher_mode = protocol.analysis_type == "Catcher Pop Time"
+        self.video_btn_save_practice.configure(
+            text="Save to Practice" if catcher_mode else "Save Analysis"
+        )
+        self.video_btn_auto_detect.configure(state=tk.NORMAL if (self.video_capture is not None and catcher_mode) else tk.DISABLED)
+        self.video_btn_auto_build.configure(state=tk.NORMAL if (self.video_capture is not None and catcher_mode) else tk.DISABLED)
+
+    def _on_video_position_changed(self, _event: tk.Event | None = None) -> None:
+        self.video_marker_custom = {}
+        self._sync_video_protocol_controls()
+        self._apply_metric_mode_controls()
+        self._reset_video_results()
+
+    def _on_video_analysis_changed(self, _event: tk.Event | None = None) -> None:
+        self.video_marker_custom = {}
+        self._sync_video_protocol_controls()
+        self._apply_metric_mode_controls()
+        self._reset_video_results()
+
     def _video_release_capture(self) -> None:
         if self.video_capture is not None:
             try:
@@ -2012,6 +2121,7 @@ class StatForgeApp:
         ]:
             btn.configure(state=state)
         self.video_timeline.configure(state=state)
+        self._sync_video_protocol_controls()
         self._apply_metric_mode_controls()
 
     def load_video_file(self) -> None:
@@ -2063,6 +2173,7 @@ class StatForgeApp:
         self.video_marker_catch = None
         self.video_marker_release = None
         self.video_marker_target = None
+        self.video_marker_custom = {}
         self.video_last_transfer = None
         self.video_last_throw = None
         self.video_last_pop = None
@@ -2197,24 +2308,34 @@ class StatForgeApp:
 
     def mark_video_time(self, marker: str) -> None:
         t = float(self.video_current_time)
+        protocol = self._current_video_protocol()
+        marker_names = list(protocol.event_markers)
+        while len(marker_names) < 3:
+            marker_names.append("n/a")
+        mapped_name = marker_names[0] if marker == "catch" else marker_names[1] if marker == "release" else marker_names[2]
         self.video_last_transfer = None
         self.video_last_throw = None
         self.video_last_pop = None
         self.video_result_transfer_var.set("Transfer Time: —")
         self.video_result_throw_var.set("Throw Time: —")
         self.video_result_pop_var.set("Total Pop Time: —")
+        if mapped_name != "n/a":
+            self.video_marker_custom[mapped_name] = t
         if marker == "catch":
             self.video_marker_catch = t
-            self.video_result_catch_var.set(f"Catch Time: {self._format_seconds(t)}")
+            self.video_result_catch_var.set(f"{mapped_name.title()} Time: {self._format_seconds(t)}")
         elif marker == "release":
             self.video_marker_release = t
-            self.video_result_release_var.set(f"Release Time: {self._format_seconds(t)}")
+            self.video_result_release_var.set(f"{mapped_name.title()} Time: {self._format_seconds(t)}")
         elif marker == "target":
             self.video_marker_target = t
+            if mapped_name != "n/a":
+                self.video_result_pop_var.set(f"{mapped_name.title()} Time: {self._format_seconds(t)}")
 
     def _reset_video_results(self) -> None:
-        self.video_result_catch_var.set("Catch Time: —")
-        self.video_result_release_var.set("Release Time: —")
+        first, second, _ = self._current_video_marker_labels()
+        self.video_result_catch_var.set(f"{first.title()} Time: —")
+        self.video_result_release_var.set(f"{second.title()} Time: —")
         self.video_result_transfer_var.set("Transfer Time: —")
         self.video_result_throw_var.set("Throw Time: —")
         self.video_result_pop_var.set("Total Pop Time: —")
@@ -2292,6 +2413,16 @@ class StatForgeApp:
     def _apply_metric_mode_controls(self) -> None:
         mode = self._get_metric_mode_key() if hasattr(self, "video_metric_mode_var") else "transfer"
         controls_enabled = self.video_capture is not None
+        protocol = self._current_video_protocol()
+        catcher_mode = protocol.analysis_type == "Catcher Pop Time"
+
+        self.video_metric_mode_combo.configure(state="readonly" if catcher_mode else tk.DISABLED)
+
+        if not catcher_mode:
+            self.video_est_flight_entry.configure(state=tk.DISABLED)
+            self.video_marker_target = None
+            self.video_btn_mark_target.configure(state=tk.DISABLED if controls_enabled else tk.DISABLED)
+            return
 
         if mode == "full_pop":
             self.video_est_flight_entry.configure(state=tk.DISABLED)
@@ -2495,6 +2626,9 @@ class StatForgeApp:
         if not self.video_path or self.video_capture is None:
             messagebox.showerror("No Video", "Load a video first.")
             return
+        if self._current_video_protocol().analysis_type != "Catcher Pop Time":
+            messagebox.showinfo("Protocol Support", "Auto detect currently supports Catcher Pop Time only.")
+            return
 
         try:
             release_window_sec = self._parse_release_window_seconds()
@@ -2542,6 +2676,7 @@ class StatForgeApp:
 
         self.video_marker_catch = catch_time
         self.video_marker_release = release_time
+        self.video_marker_custom = {"catch": catch_time, "release": release_time}
         self.video_result_catch_var.set(f"Catch Time: {self._format_seconds(catch_time)}")
         self.video_result_release_var.set(f"Release Time: {self._format_seconds(release_time)}")
         self.video_result_transfer_var.set("Transfer Time: —")
@@ -2564,6 +2699,9 @@ class StatForgeApp:
     def auto_build_rep_set(self) -> None:
         if not self.video_path or self.video_capture is None:
             messagebox.showerror("No Video", "Load a video first.")
+            return
+        if self._current_video_protocol().analysis_type != "Catcher Pop Time":
+            messagebox.showinfo("Protocol Support", "Auto build currently supports Catcher Pop Time only.")
             return
         try:
             max_reps = self._parse_batch_max_reps()
@@ -2682,6 +2820,7 @@ class StatForgeApp:
         self.video_marker_catch = first.catch_time
         self.video_marker_release = first.release_time
         self.video_marker_target = None
+        self.video_marker_custom = {"catch": first.catch_time, "release": first.release_time}
         self.video_result_catch_var.set(f"Catch Time: {self._format_seconds(first.catch_time)}")
         self.video_result_release_var.set(f"Release Time: {self._format_seconds(first.release_time)}")
         self.video_result_transfer_var.set(f"Transfer Time: {self._format_seconds(first.transfer)}")
@@ -2701,6 +2840,50 @@ class StatForgeApp:
         release = self.video_marker_release
         target = self.video_marker_target
         mode = self._get_metric_mode_key()
+        protocol = self._current_video_protocol()
+        marker_labels = list(protocol.event_markers)
+        while len(marker_labels) < 3:
+            marker_labels.append("n/a")
+
+        custom_markers: dict[str, float] = dict(self.video_marker_custom)
+        if marker_labels[0] != "n/a" and catch is not None:
+            custom_markers.setdefault(marker_labels[0], float(catch))
+        if marker_labels[1] != "n/a" and release is not None:
+            custom_markers.setdefault(marker_labels[1], float(release))
+        if marker_labels[2] != "n/a" and target is not None:
+            custom_markers.setdefault(marker_labels[2], float(target))
+
+        if protocol.analysis_type != "Catcher Pop Time":
+            missing = [m for m in protocol.event_markers if m not in custom_markers]
+            if missing:
+                if show_error:
+                    messagebox.showerror("Missing Markers", f"Set marker(s) first: {', '.join(missing)}.")
+                return None
+            try:
+                result = compute_protocol_result(protocol.analysis_type, custom_markers, options=None)
+            except ValueError as exc:
+                if show_error:
+                    messagebox.showerror("Validation", str(exc))
+                return None
+            duration = float(result.get("duration_seconds") or 0.0)
+            if duration <= 0:
+                if show_error:
+                    messagebox.showerror("Validation", "Computed duration must be positive.")
+                return None
+            start_key = marker_labels[0]
+            end_key = marker_labels[1]
+            start_val = float(custom_markers.get(start_key, 0.0))
+            end_val = float(custom_markers.get(end_key, start_val + duration))
+            return RepMark(
+                catch_time=start_val,
+                release_time=end_val,
+                target_time=float(custom_markers.get(marker_labels[2])) if marker_labels[2] in custom_markers else None,
+                metric_mode="transfer",
+                transfer=duration,
+                pop_total=duration,
+                estimated_flight=None,
+            )
+
         if catch is None or release is None:
             if show_error:
                 messagebox.showerror("Missing Markers", "Set Catch and Release markers first.")
@@ -2757,6 +2940,7 @@ class StatForgeApp:
         self.video_marker_catch = None
         self.video_marker_release = None
         self.video_marker_target = None
+        self.video_marker_custom = {}
         self._reset_video_results()
 
     def add_current_rep(self) -> None:
@@ -2784,6 +2968,13 @@ class StatForgeApp:
         self._refresh_rep_list()
 
     def _refresh_rep_list(self) -> None:
+        first, second, third = self._current_video_marker_labels()
+        self.rep_tree.heading("catch", text=first.title())
+        self.rep_tree.heading("release", text=second.title())
+        self.rep_tree.heading("target", text=third.title() if third != "n/a" else "End")
+        protocol = self._current_video_protocol()
+        self.rep_tree.heading("transfer", text="Duration" if protocol.analysis_type != "Catcher Pop Time" else "Transfer")
+        self.rep_tree.heading("pop", text="Result" if protocol.analysis_type != "Catcher Pop Time" else "Pop Time")
         for iid in self.rep_tree.get_children():
             self.rep_tree.delete(iid)
 
@@ -2830,19 +3021,24 @@ class StatForgeApp:
         rep = self._validate_current_rep(show_error=True)
         if rep is None:
             return
+        protocol = self._current_video_protocol()
+        first, second, _ = self._current_video_marker_labels()
         throw: float | None = None
-        if rep.metric_mode == "full_pop" and rep.target_time is not None:
+        if protocol.analysis_type == "Catcher Pop Time" and rep.metric_mode == "full_pop" and rep.target_time is not None:
             throw = rep.target_time - rep.release_time
-        elif rep.metric_mode == "estimated_pop":
+        elif protocol.analysis_type == "Catcher Pop Time" and rep.metric_mode == "estimated_pop":
             throw = rep.estimated_flight
 
         self.video_last_transfer = rep.transfer
         self.video_last_throw = throw
         self.video_last_pop = rep.pop_total
-        self.video_result_catch_var.set(f"Catch Time: {self._format_seconds(rep.catch_time)}")
-        self.video_result_release_var.set(f"Release Time: {self._format_seconds(rep.release_time)}")
-        self.video_result_transfer_var.set(f"Transfer Time: {self._format_seconds(rep.transfer)}")
-        if rep.metric_mode == "estimated_pop":
+        self.video_result_catch_var.set(f"{first.title()} Time: {self._format_seconds(rep.catch_time)}")
+        self.video_result_release_var.set(f"{second.title()} Time: {self._format_seconds(rep.release_time)}")
+        self.video_result_transfer_var.set(f"Duration: {self._format_seconds(rep.transfer)}")
+        if protocol.analysis_type != "Catcher Pop Time":
+            self.video_result_throw_var.set("Throw Time: —")
+            self.video_result_pop_var.set(f"Result: {self._format_seconds(rep.pop_total)}")
+        elif rep.metric_mode == "estimated_pop":
             self.video_result_throw_var.set(f"Estimated Flight: {self._format_seconds(throw)}")
             self.video_result_pop_var.set(f"Estimated Total Pop: {self._format_seconds(rep.pop_total)}")
         elif rep.metric_mode == "full_pop":
@@ -3188,10 +3384,12 @@ class StatForgeApp:
         transfers = [rep.transfer for rep in self.rep_marks]
         best_transfer = min(transfers)
         avg_transfer = sum(transfers) / len(transfers)
+        protocol = self._current_video_protocol()
+        position_label = normalize_position(self.video_position_var.get())
         mode_key = self._get_metric_mode_key()
         mode_label = self._metric_mode_note_label(mode_key)
         est_flight: float | None = None
-        if mode_key == "estimated_pop":
+        if protocol.analysis_type == "Catcher Pop Time" and mode_key == "estimated_pop":
             try:
                 est_flight = self._parse_estimated_flight_seconds()
             except ValueError as err:
@@ -3200,7 +3398,7 @@ class StatForgeApp:
 
         pop_values: list[float] = []
         for rep in self.rep_marks:
-            if mode_key == "full_pop":
+            if protocol.analysis_type == "Catcher Pop Time" and mode_key == "full_pop":
                 if rep.target_time is None:
                     messagebox.showerror(
                         "Validation",
@@ -3208,7 +3406,7 @@ class StatForgeApp:
                     )
                     return
                 pop_values.append(rep.target_time - rep.catch_time)
-            elif mode_key == "estimated_pop":
+            elif protocol.analysis_type == "Catcher Pop Time" and mode_key == "estimated_pop":
                 pop_values.append(rep.transfer + float(est_flight or 0.0))
             else:
                 pop_values.append(rep.transfer)
@@ -3219,9 +3417,9 @@ class StatForgeApp:
         rep_parts: list[str] = []
         for idx, rep in enumerate(self.rep_marks, start=1):
             target_text = "—" if rep.target_time is None else f"{rep.target_time:.3f}s"
-            if mode_key == "full_pop" and rep.target_time is not None:
+            if protocol.analysis_type == "Catcher Pop Time" and mode_key == "full_pop" and rep.target_time is not None:
                 pop_value = rep.target_time - rep.catch_time
-            elif mode_key == "estimated_pop":
+            elif protocol.analysis_type == "Catcher Pop Time" and mode_key == "estimated_pop":
                 pop_value = rep.transfer + float(est_flight or 0.0)
             else:
                 pop_value = rep.transfer
@@ -3230,7 +3428,7 @@ class StatForgeApp:
                 f"R{idx}: c={rep.catch_time:.3f}s r={rep.release_time:.3f}s t={target_text} pop={pop_text}"
             )
         auto_note = (
-            f"Mode: {mode_label}\n"
+            f"Mode: {mode_label} | Position: {position_label} | Analysis: {protocol.analysis_type}\n"
             f"Video: {filename} | reps={len(self.rep_marks)} "
             f"| best_transfer={best_transfer:.3f}s avg_transfer={avg_transfer:.3f}s "
             f"| best_pop={best_pop:.3f}s avg_pop={avg_pop:.3f}s\n"
@@ -3239,24 +3437,53 @@ class StatForgeApp:
         user_notes = self.video_session_notes_text.get("1.0", tk.END).strip()
         notes = auto_note if not user_notes else f"{auto_note}\n{user_notes}"
 
-        self.db.add_practice_session(
+        start_seconds = min(rep.catch_time for rep in self.rep_marks)
+        end_seconds = max((rep.target_time if rep.target_time is not None else rep.release_time) for rep in self.rep_marks)
+        fps_value = float(self.video_fps) if self.video_fps > 0 else None
+        start_frame = int(start_seconds * self.video_fps) if fps_value else None
+        end_frame = int(end_seconds * self.video_fps) if fps_value else None
+        self.db.add_video_analysis(
             player_id=self.active_player_id,
-            session_date=date.today().isoformat(),
-            category="Catching",
-            focus="Pop Time",
-            duration_min=0,
-            notes=notes,
+            analysis_date=date.today().isoformat(),
+            position=position_label,
+            analysis_type=protocol.analysis_type,
             video_path=str(Path(self.video_path).resolve()),
-            pop_time_best=best_pop,
-            pop_time_avg=avg_pop,
-            throws=reps,
-            blocks=None,
-            swings=None,
+            fps=fps_value,
+            start_frame=start_frame,
+            end_frame=end_frame,
+            duration_seconds=avg_pop,
+            extra={
+                "rep_count": len(self.rep_marks),
+                "best_duration": best_pop,
+                "avg_duration": avg_pop,
+                "mode": mode_label,
+                "estimated_flight": est_flight,
+            },
+            notes=notes,
         )
+
+        if protocol.analysis_type == "Catcher Pop Time":
+            self.db.add_practice_session(
+                player_id=self.active_player_id,
+                session_date=date.today().isoformat(),
+                category="Catching",
+                focus="Pop Time",
+                duration_min=0,
+                notes=notes,
+                video_path=str(Path(self.video_path).resolve()),
+                pop_time_best=best_pop,
+                pop_time_avg=avg_pop,
+                throws=reps,
+                blocks=None,
+                swings=None,
+            )
 
         self.refresh_practice_sessions()
         self.refresh_dashboard()
-        messagebox.showinfo("Saved", "Video rep set saved to practice.")
+        if protocol.analysis_type == "Catcher Pop Time":
+            messagebox.showinfo("Saved", "Video rep set saved to practice and video analysis history.")
+        else:
+            messagebox.showinfo("Saved", "Video analysis saved to history.")
 
     def save_game_and_stats(self) -> None:
         if not self.active_player_id:

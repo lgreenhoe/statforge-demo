@@ -28,6 +28,7 @@ from statforge_core.pop_time import calculate_pop_metrics
 from statforge_core.recommendations import generate_recommendations
 from statforge_core.season_summary import compute_season_summary_metrics
 from statforge_core.suggestions import get_suggestions
+from statforge_core.video_protocols import compute_protocol_result, list_protocols_for_position, normalize_position
 from statforge_web.demo_data_loader import compute_or_map_metrics, load_demo_dataset
 from statforge_web.drill_library import DRILL_LIBRARY, filter_drill_library, match_library_drills
 from statforge_web.drills import build_training_suggestions
@@ -1525,9 +1526,64 @@ def _render_trends(ctx: dict[str, Any], practice_df: pd.DataFrame, summaries_df:
         st.dataframe(pd.DataFrame(baseline_rows), use_container_width=True, hide_index=True)
 
 
-def _render_pop_time(practice_df: pd.DataFrame) -> None:
-    st.subheader("Video Analysis / Pop Time")
-    st.caption("Pop-time review snapshot. Frame marking and video workflows run in desktop.")
+def _render_pop_time(ctx: dict[str, Any], practice_df: pd.DataFrame) -> None:
+    st.subheader("Video Analysis")
+    st.caption("Position-aware, marker-based timing preview. Full frame-by-frame playback remains in desktop.")
+
+    player_position = normalize_position(str(ctx.get("player", {}).get("position", "Catcher")))
+    position_options = ["Catcher", "Pitcher", "Infield", "Outfield", "Hitter", "FirstBase"]
+    if player_position not in position_options:
+        player_position = "Catcher"
+    c_pos, c_type = st.columns([1, 2], gap="small")
+    with c_pos:
+        position = st.selectbox("Position", options=position_options, index=position_options.index(player_position))
+    protocols = list_protocols_for_position(position)
+    analysis_names = [protocol.analysis_type for protocol in protocols] or ["Catcher Pop Time"]
+    with c_type:
+        analysis_type = st.selectbox("Analysis Type", options=analysis_names)
+    protocol = next((p for p in protocols if p.analysis_type == analysis_type), None)
+    if protocol is None:
+        st.info("No analysis protocol available for this position yet.")
+        return
+
+    st.caption(f"Markers to set: {', '.join(m.title() for m in protocol.event_markers)}")
+    marker_cols = st.columns(max(len(protocol.event_markers), 1), gap="small")
+    markers: dict[str, float] = {}
+    for idx, marker in enumerate(protocol.event_markers):
+        with marker_cols[idx]:
+            markers[marker] = st.number_input(
+                f"{marker.title()} (s)",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                key=f"video_marker_{analysis_type}_{marker}",
+            )
+
+    if st.button("Compute Metric", key=f"compute_video_metric_{analysis_type}"):
+        try:
+            options: dict[str, Any] = {}
+            if analysis_type == "Catcher Pop Time" and "target" not in markers:
+                options["estimated_flight"] = 0.8
+            result = compute_protocol_result(analysis_type, markers, options=options)
+            duration = float(result.get("duration_seconds") or 0.0)
+            st.success(f"Computed duration: {_fmt_seconds(duration, 2)}")
+            if result.get("transfer_seconds") is not None:
+                st.caption(f"Transfer: {_fmt_seconds(float(result.get('transfer_seconds') or 0.0), 2)}")
+            if result.get("throw_seconds") is not None:
+                st.caption(f"Throw: {_fmt_seconds(float(result.get('throw_seconds') or 0.0), 2)}")
+            player_stats = {
+                "ops": _window_metrics(ctx["scoped_games"]).get("ops"),
+                "k_rate": _window_metrics(ctx["scoped_games"]).get("k_rate"),
+                "pop_time": duration if analysis_type == "Catcher Pop Time" else None,
+            }
+            suggestions = get_suggestions(player_stats)
+            if suggestions:
+                st.markdown("**Suggested Development Focus**")
+                for item in suggestions[:2]:
+                    drill_line = ", ".join(item.get("drills", [])[:2])
+                    st.markdown(f"- **{item.get('title', 'Focus')}:** {item.get('why', '')}  \n  Drills: {drill_line}")
+        except Exception as exc:
+            st.error(f"Unable to compute metric: {exc}")
 
     if practice_df.empty:
         _render_empty_state(
@@ -1570,7 +1626,8 @@ def _render_pop_time(practice_df: pd.DataFrame) -> None:
     st.markdown('<div class="sf-card">', unsafe_allow_html=True)
     st.markdown('<div class="sf-card-title">Desktop-only Actions</div>', unsafe_allow_html=True)
     st.markdown(
-        "- Load Video / timeline scrub  \n- Mark Catch / Release / Target  \n- Auto Detect and Auto Build Rep Set  \n- Save to Practice"
+        "- Load video and timeline scrub  \n- Mark protocol events frame-by-frame  \n"
+        "- Auto Detect / Auto Build (Catcher Pop Time)  \n- Save to local practice + video analysis"
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1763,7 +1820,7 @@ def _render_selected_section(
     elif section == "Trends":
         _render_trends(ctx, practice_df, summaries_df)
     elif section == "Pop Time":
-        _render_pop_time(practice_df)
+        _render_pop_time(ctx, practice_df)
     elif section == "Export":
         _render_export(ctx, practice_df, summaries_df)
     elif section == "Quick Entry":
